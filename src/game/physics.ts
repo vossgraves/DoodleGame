@@ -43,13 +43,15 @@ export class World {
     height: number,
     dt: number,
     gravity: number,
-  ): { onGround: boolean; hitWall: boolean; stepped: boolean } {
+  ): { onGround: boolean; hitWall: boolean; stepped: boolean; wallNormal: THREE.Vector3 | null } {
     vel.y -= gravity * dt;
     if (vel.y < -36) vel.y = -36;
 
     let onGround = false;
     let hitWall = false;
     let stepped = false;
+    // which way the last wall pushed back, so a wall jump has something to kick off
+    let wallNormal: THREE.Vector3 | null = null;
 
     // vertical
     pos.y += vel.y * dt;
@@ -99,9 +101,11 @@ export class World {
         if (axis === "x") {
           if (delta > 0) pos.x = b.minx - halfW - EPS;
           else pos.x = b.maxx + halfW + EPS;
+          wallNormal = new THREE.Vector3(delta > 0 ? -1 : 1, 0, 0);
         } else {
           if (delta > 0) pos.z = b.minz - halfW - EPS;
           else pos.z = b.maxz + halfW + EPS;
+          wallNormal = new THREE.Vector3(0, 0, delta > 0 ? -1 : 1);
         }
         vel[axis] = 0;
         hitWall = true;
@@ -118,7 +122,7 @@ export class World {
       vel.set(0, 0, 0);
       onGround = true;
     }
-    return { onGround, hitWall, stepped };
+    return { onGround, hitWall, stepped, wallNormal };
   }
 
   blocked(pos: THREE.Vector3, halfW: number, height: number) {

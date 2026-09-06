@@ -51,6 +51,12 @@ export class Input {
   canvas: HTMLCanvasElement;
   state: Record<string, boolean> = {};
   prev: Record<string, boolean> = {};
+  /**
+   * Actions that went down since the last frame. A tap shorter than one frame
+   * would otherwise land and lift between two samples and be lost entirely —
+   * which is exactly what happens to a quick jump on a struggling phone.
+   */
+  private tapped: Record<string, boolean> = {};
   keys: Record<string, boolean> = {};
   mouseBtns: Record<string, boolean> = {};
   move = { x: 0, y: 0 };
@@ -84,7 +90,10 @@ export class Input {
     window.addEventListener("keydown", (e) => {
       if (e.repeat) return;
       const a = KEYMAP[e.code];
-      if (a) this.keys[a] = true;
+      if (a) {
+        this.keys[a] = true;
+        this.tapped[a] = true;
+      }
       if (["Space", "Tab", "ArrowUp", "ArrowDown"].includes(e.code)) e.preventDefault();
     });
     window.addEventListener("keyup", (e) => {
@@ -112,7 +121,10 @@ export class Input {
     });
     document.addEventListener("mousedown", (e) => {
       const a = MOUSEMAP[e.button];
-      if (a) this.mouseBtns[a] = true;
+      if (a) {
+        this.mouseBtns[a] = true;
+        this.tapped[a] = true;
+      }
       if (e.button === 1) e.preventDefault();
     });
     document.addEventListener("mouseup", (e) => {
@@ -174,6 +186,7 @@ export class Input {
   }
   setTouch(btn: string, down: boolean) {
     this.touchButtons[btn] = down;
+    if (down) this.tapped[btn] = true;
   }
   clearTouch() {
     this.touchMove.x = 0;
@@ -200,6 +213,8 @@ export class Input {
     for (const k in this.keys) if (this.keys[k]) s[k] = true;
     for (const k in this.mouseBtns) if (this.mouseBtns[k]) s[k] = true;
     for (const k in this.touchButtons) if (this.touchButtons[k]) s[k] = true;
+    for (const k in this.tapped) if (this.tapped[k]) s[k] = true;
+    this.tapped = {};
     if (this.wheel > 0) s.nextWeapon = true;
     else if (this.wheel < 0) s.prevWeapon = true;
     this.wheel = 0;

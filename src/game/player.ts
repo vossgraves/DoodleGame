@@ -821,9 +821,18 @@ const G = 26;
 const WALK = 6.6;
 const SPRINT = 10.4;
 const CROUCH = 3.5;
-const ACCEL = 42;
-const AIR_ACCEL = 18;
+const ACCEL = 140;
+const FRICTION = 8;
+const AIR_ACCEL = 36;
+/** air control tops out well below run speed: you steer, you do not accelerate */
+const AIR_CAP = 7.5;
 const JUMP = 9.4;
+/** how fast you have to be going before a crouch turns into a slide */
+const SLIDE_ENTRY = 6.3;
+/** a slide is boosted up to this, never past it */
+const SLIDE_CAP = 12.8;
+const SLIDE_DRAG = 6.5;
+const DOWN = new THREE.Vector3(0, -1, 0);
 const STAND_H = 1.72;
 const CROUCH_H = 1.08;
 const EYE_STAND = 1.58;
@@ -863,6 +872,18 @@ export class Player {
   bobAmt = 0;
   coyote = 0;
   jumpBuf = 0;
+  /** seconds since the feet left the ground */
+  airT = 0;
+  /** seconds since the last wall contact, for the wall-jump window */
+  private wallTouch = 9;
+  private wallN: THREE.Vector3 | null = null;
+  private hitWall = false;
+  private wallJumpCd = 0;
+  private mantleCd = 0;
+  /** brief low-friction window after a fast landing */
+  private landGraceT = 0;
+  /** metres walked since the last footstep */
+  private stepDist = 0;
   dashCd = 0;
   airJumps = 1;
   sprinting = false;
@@ -1051,6 +1072,37 @@ export class Player {
     this.hp = Math.min(this.maxHp, this.hp + n);
   }
 
+  /**
+   * Ledge grab. Look for a wall just in front of your chest, then a walkable top
+   * within reach above it with room to stand, and if both are there give
+   * yourself exactly the upward velocity needed to clear it.
+   */
+  private tryMantle() {
+    const world = this.hooks.world;
+    const fx = -Math.sin(this.yaw);
+    const fz = -Math.cos(this.yaw);
+    const fwd = new THREE.Vector3(fx, 0, fz);
+    const chest = new THREE.Vector3(this.pos.x, this.pos.y + 1.0, this.pos.z);
+    if (!world.raycast(chest, fwd, 0.95)) return;
+
+    const over = new THREE.Vector3(this.pos.x + fx * 0.95, this.pos.y + 2.75, this.pos.z + fz * 0.95);
+    const top = world.raycast(over, DOWN, 2.25);
+    if (!top || top.ny < 0.5) return;
+    const dy = top.point.y - this.pos.y;
+    if (dy < 0.5 || dy > 2.4) return;
+    // no point pulling up into something solid
+    const stand = new THREE.Vector3(over.x, top.point.y + 0.08, over.z);
+    if (world.blocked(stand, 0.34, CROUCH_H)) return;
+
+    this.vel.y = Math.min(11, Math.sqrt(2 * G * (dy + 0.45)));
+    this.vel.x = fx * 3.2;
+    this.vel.z = fz * 3.2;
+    this.mantleCd = 0.7;
+    this.hooks.audio.mantle();
+    this.landDip.kick(-2.5);
+    this.fovKick.kick(45);
+  }
+
   private wishDir() {
     const i = this.hooks.input;
     const f = this.forward.clone();
@@ -1109,39 +1161,91 @@ export class Player {
       if (mi >= 0) this.switchTo(mi);
     }
 
-    const wantCrouch = i.down("crouch");
-    this.sprinting = i.down("sprint") && !this.aiming && !wantCrouch && i.move.y > 0.3;
-    if (this.sprinting && wantCrouch && this.onGround && !this.sliding) {
+    const crouchDown = i.down("crouch");
+    const hspeed = Math.hypot(this.vel.x, this.vel.z);
+    // A slide is a speed thing, not a timer: you have to be moving to start one,
+    // it bleeds off, and it ends the moment you stand up or run out of momentum.
+    if (i.pressed("crouch") && this.onGround && hspeed > SLIDE_ENTRY && !this.sliding) {
       this.sliding = true;
-      this.slideT = 0.7;
-      const f = this.forward.clone();
-      f.y = 0;
-      f.normalize();
-      this.vel.addScaledVector(f, 6);
+      this.slideT = 0;
+      const boost = clamp(SLIDE_CAP - hspeed, 0, 4.5);
+      this.vel.x += (this.vel.x / hspeed) * boost;
+      this.vel.z += (this.vel.z / hspeed) * boost;
+      this.hooks.audio.slide();
+      this.fovKick.kick(75);
+      this.landDip.kick(-2.5);
     }
     if (this.sliding) {
-      this.slideT -= dt;
-      if (this.slideT <= 0 || !this.onGround) this.sliding = false;
+      this.slideT += dt;
+      if (!crouchDown || hspeed < 3.5 || this.airT > 0.35) this.sliding = false;
     }
-    this.crouching = wantCrouch || this.sliding;
+    this.sprinting = i.down("sprint") && !this.aiming && !crouchDown && i.move.y > 0.3;
+    this.crouching = (crouchDown && this.onGround) || this.sliding;
     const targetH = this.crouching ? CROUCH_H : STAND_H;
     this.height = damp(this.height, targetH, 14, dt);
     this.eyeH = damp(this.eyeH, this.crouching ? EYE_CROUCH : EYE_STAND, 14, dt);
 
-    if (i.pressed("jump")) this.jumpBuf = 0.12;
+    if (i.pressed("jump")) this.jumpBuf = 0.15;
     this.jumpBuf = Math.max(0, this.jumpBuf - dt);
-    this.coyote = this.onGround ? 0.12 : Math.max(0, this.coyote - dt);
-    const grounded = this.coyote > 0;
-    if (this.jumpBuf > 0 && (grounded || this.airJumps > 0)) {
-      this.vel.y = JUMP;
-      this.onGround = false;
-      this.jumpBuf = 0;
-      this.coyote = 0;
-      if (!grounded) this.airJumps -= 1;
-      this.hooks.audio.jump();
-      this.sliding = false;
+    this.coyote = this.onGround ? 0.13 : Math.max(0, this.coyote - dt);
+    this.airT = this.onGround ? 0 : this.airT + dt;
+    this.wallJumpCd = Math.max(0, this.wallJumpCd - dt);
+    this.mantleCd = Math.max(0, this.mantleCd - dt);
+    this.landGraceT = Math.max(0, this.landGraceT - dt);
+    // a wall only counts while you are off the ground, and only for a moment
+    if (this.hitWall && !this.onGround) this.wallTouch = 0;
+    else this.wallTouch += dt;
+
+    const wish = this.wishDir();
+    const wishLen = Math.hypot(wish.x, wish.z);
+    if (this.jumpBuf > 0) {
+      if (this.onGround || this.coyote > 0) {
+        this.jumpBuf = 0;
+        this.coyote = 0;
+        this.vel.y = JUMP;
+        this.onGround = false;
+        this.airJumps = 1;
+        // jumping out of a slide keeps the speed you built up
+        if (this.sliding) {
+          this.vel.x *= 1.06;
+          this.vel.z *= 1.06;
+          this.sliding = false;
+        }
+        this.hooks.audio.jump();
+        this.landDip.kick(-1.2);
+      } else if (this.wallTouch < 0.12 && this.wallJumpCd <= 0 && this.vel.y < 7 && this.wallN) {
+        // kick off the wall: away from it, plus a push in the direction you face
+        this.jumpBuf = 0;
+        this.wallJumpCd = 0.35;
+        const n = this.wallN;
+        const fx = -Math.sin(this.yaw);
+        const fz = -Math.cos(this.yaw);
+        this.vel.x = n.x * 7.5 + this.vel.x * 0.35 + fx * 2.5;
+        this.vel.z = n.z * 7.5 + this.vel.z * 0.35 + fz * 2.5;
+        this.vel.y = 9.2;
+        this.airJumps = 1;
+        this.hooks.audio.wallJump();
+        this.roll += n.dot(this.right) > 0 ? -0.1 : 0.1;
+        this.fovKick.kick(60);
+        this.landDip.kick(-1.5);
+      } else if (this.airJumps > 0) {
+        // second beat of height, redirected toward wherever you are steering
+        this.jumpBuf = 0;
+        this.airJumps -= 1;
+        this.vel.y = JUMP * 0.92;
+        if (wishLen > 0) {
+          const cur = this.vel.x * wish.x + this.vel.z * wish.z;
+          const add = Math.max(0, 7.5 * wishLen - cur);
+          this.vel.x += wish.x * add;
+          this.vel.z += wish.z * add;
+        }
+        this.hooks.audio.jump();
+        this.fovKick.kick(48);
+        this.landDip.kick(-1.4);
+      }
     }
-    if (i.pressed("dash") && this.dashCd <= 0) {
+    // crouch in the air is the air dash, same as the dedicated key
+    if ((i.pressed("dash") || (i.pressed("crouch") && !this.onGround)) && this.dashCd <= 0) {
       const f = this.forward.clone();
       f.y = clamp(f.y, -0.15, 0.35);
       f.normalize();
@@ -1152,37 +1256,71 @@ export class Player {
       this.fovKick.kick(80);
     }
     this.dashCd = Math.max(0, this.dashCd - dt);
+    // hauling yourself onto a ledge you ran into, rather than bouncing off it
+    if (!this.onGround && this.mantleCd <= 0 && i.move.y > 0.3 && this.vel.y < 8) this.tryMantle();
 
-    const wish = this.wishDir();
-    const base = this.sliding ? SPRINT * 1.15 : this.crouching ? CROUCH : this.sprinting ? SPRINT : WALK;
+    const base = this.crouching && !this.sliding ? CROUCH : this.sprinting ? SPRINT : WALK;
     // what you are carrying sets the pace — an LMG is not an SMG
     const speed = base * this.weapon.def.moveMul;
     if (this.onGround) {
-      this.vel.x *= Math.pow(0.0008, dt);
-      this.vel.z *= Math.pow(0.0008, dt);
-      this.vel.x += wish.x * speed * ACCEL * dt * 0.12;
-      this.vel.z += wish.z * speed * ACCEL * dt * 0.12;
-      const hs = Math.hypot(this.vel.x, this.vel.z);
-      const cap = speed;
-      if (hs > cap) {
-        this.vel.x *= cap / hs;
-        this.vel.z *= cap / hs;
+      this.airJumps = 1;
+      if (this.sliding) {
+        // a slide keeps whatever speed it started with and bleeds off slowly;
+        // steering only turns it, it can never add speed
+        const sp = Math.hypot(this.vel.x, this.vel.z);
+        if (sp > 0) {
+          const ns = Math.max(0, sp - SLIDE_DRAG * dt) / sp;
+          this.vel.x *= ns;
+          this.vel.z *= ns;
+        }
+        if (wishLen > 0) {
+          this.vel.x += wish.x * 6 * dt;
+          this.vel.z += wish.z * 6 * dt;
+          const n2 = Math.hypot(this.vel.x, this.vel.z);
+          if (n2 > sp && n2 > 0) {
+            this.vel.x *= sp / n2;
+            this.vel.z *= sp / n2;
+          }
+        }
+      } else {
+        // landing fast buys a moment of low friction, so a run doesn't die on touchdown
+        const fr = FRICTION * (this.landGraceT > 0 ? 0.25 : 1);
+        const sp = Math.hypot(this.vel.x, this.vel.z);
+        if (sp > 0) {
+          const ns = Math.max(0, sp - sp * fr * dt) / sp;
+          this.vel.x *= ns;
+          this.vel.z *= ns;
+        }
+        if (wishLen > 0) {
+          const cur = this.vel.x * wish.x + this.vel.z * wish.z;
+          const add = Math.min(speed * wishLen - cur, ACCEL * dt);
+          if (add > 0) {
+            this.vel.x += wish.x * add;
+            this.vel.z += wish.z * add;
+          }
+        }
       }
-    } else {
-      this.vel.x += wish.x * AIR_ACCEL * dt;
-      this.vel.z += wish.z * AIR_ACCEL * dt;
-      const hs = Math.hypot(this.vel.x, this.vel.z);
-      if (hs > SPRINT * 1.15) {
-        this.vel.x *= (SPRINT * 1.15) / hs;
-        this.vel.z *= (SPRINT * 1.15) / hs;
+    } else if (wishLen > 0) {
+      // air control adds only up to a low cap, so you steer without accelerating
+      const cur = this.vel.x * wish.x + this.vel.z * wish.z;
+      const add = Math.min(AIR_CAP * wishLen - cur, AIR_ACCEL * dt);
+      if (add > 0) {
+        this.vel.x += wish.x * add;
+        this.vel.z += wish.z * add;
       }
     }
 
+    const fallVel = this.vel.y;
     const col = this.hooks.world.moveAABB(this.pos, this.vel, 0.34, this.height, dt, G);
+    this.hitWall = col.hitWall;
+    if (col.wallNormal) this.wallN = col.wallNormal;
     if (col.onGround && !this.lastGround) {
-      this.landDip.kick(-this.vel.y * 4);
+      const impact = clamp(-fallVel / 14, 0, 1.5);
+      this.landDip.kick(-impact * 6 - 0.5);
       this.hooks.audio.land();
       this.airJumps = 1;
+      this.shake += impact * 0.15;
+      if (Math.hypot(this.vel.x, this.vel.z) > 9) this.landGraceT = 0.4;
     }
     this.lastGround = this.onGround;
     this.onGround = col.onGround;
@@ -1193,8 +1331,18 @@ export class Player {
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).normalize();
 
     const spd = Math.hypot(this.vel.x, this.vel.z);
-    this.bobAmt = damp(this.bobAmt, this.onGround && spd > 1.5 ? Math.min(1, spd / SPRINT) : 0, 8, dt);
-    this.bobPhase += dt * (8 + spd * 1.2) * this.bobAmt;
+    // footsteps land by distance covered, not on a timer, so they stay in step
+    // with the legs whether you are walking, sprinting or being dragged along
+    const moving = this.onGround && spd > 0.6 && !this.sliding;
+    this.bobAmt = damp(this.bobAmt, moving ? Math.min(1, spd / SPRINT) : 0, 8, dt);
+    if (moving) {
+      this.bobPhase += dt * (8 + spd * 1.2);
+      this.stepDist += spd * dt;
+      if (this.stepDist > (this.sprinting ? 2.5 : 2.0)) {
+        this.stepDist = 0;
+        this.hooks.audio.step();
+      }
+    }
 
     this.lastDamageT += dt;
     if (this.lastDamageT > 4.2 && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 12 * dt);

@@ -20,7 +20,6 @@ export class AudioSys {
   musicOn = false;
   private tune: "district" | "zombies" = "district";
   private musicTimer = 0;
-  private stepT = 0;
   private noise: AudioBuffer | null = null;
   muted = false;
 
@@ -193,6 +192,23 @@ export class AudioSys {
     this.beep(1400, 0.06, "square", 0.1, 0.6);
     this.noiseBurst(0.08, 4000, 2, 0.1, "highpass");
   }
+  /** Boots skidding on paper. */
+  slide() {
+    this.ensure();
+    this.noiseBurst(0.42, 900, 0.35, 0.16, "bandpass");
+  }
+  /** Kicking off a wall: a scuff and a shove. */
+  wallJump() {
+    this.ensure();
+    this.noiseBurst(0.1, 1500, 0.5, 0.14, "bandpass");
+    this.beep(320, 0.1, "triangle", 0.06, 1.6);
+  }
+  /** Hauling yourself over a ledge. */
+  mantle() {
+    this.ensure();
+    this.noiseBurst(0.16, 700, 0.6, 0.13, "lowpass");
+    this.beep(180, 0.14, "sawtooth", 0.05, 1.5);
+  }
   dash() {
     this.ensure();
     this.noiseBurst(0.1, 600, 1, 0.1, "highpass");
@@ -215,14 +231,8 @@ export class AudioSys {
       this.musicTimer -= beat;
       this.tickMusic();
     }
-    if (moving) {
-      this.stepT += dt;
-      const iv = sprint ? 0.28 : 0.42;
-      if (this.stepT > iv) {
-        this.stepT = 0;
-        this.step();
-      }
-    } else this.stepT = 0;
+    void moving;
+    void sprint;
   }
 
   private tickMusic() {
