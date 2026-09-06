@@ -1427,3 +1427,51 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   background: rgba(208, 32, 48, 0.07);
   transform: rotate(-0.6deg);
 }
+
+/* ---- rank --------------------------------------------------------------- */
+.rank-badge {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 4px 11px;
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  background: rgba(246, 243, 230, 0.6);
+  color: var(--ink);
+  line-height: 1.15;
+}
+.rank-badge b {
+  font-size: 17px;
+  letter-spacing: 0.08em;
+}
+.rank-badge .sr {
+  font-size: 14px;
+  opacity: 0.75;
+}
+.rank-badge .sr em {
+  margin-left: 5px;
+  font-style: normal;
+  font-weight: 700;
+  opacity: 1;
+}
+.rank-badge .sr em.up {
+  color: var(--green);
+}
+.rank-badge .sr em.down {
+  color: var(--red);
+}
+.rank-badge .bar {
+  display: block;
+  width: 132px;
+  height: 6px;
+  margin: 2px 0 1px;
+  border: 1.5px solid var(--ink);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.rank-badge .bar i {
+  display: block;
+  height: 100%;
+  background: repeating-linear-gradient(-55deg, var(--ink) 0 2px, transparent 2px 5px);
+}

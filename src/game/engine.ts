@@ -20,6 +20,7 @@ import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
 import { clamp, damp } from "./math";
+import { START_SR, srDelta, tierOf } from "./rank";
 
 export type GameState = "playing" | "paused" | "dead" | "intermission";
 
@@ -272,6 +273,29 @@ export class Game {
     return out;
   }
 
+  /**
+   * Pay out a ranked match once, when it ends. It reads the final board rather
+   * than tallying as it goes, so a late disconnect cannot bank a better place
+   * than the one you actually finished in.
+   */
+  private settleRank() {
+    if (!this.ranked || this.rankedDone) return;
+    if (this.match.state !== "over") return;
+    this.rankedDone = true;
+    const board = this.match.scoreboard();
+    const mine = board.find((r) => r.id === this.match.myId);
+    if (!mine) return;
+    const place = board.indexOf(mine) + 1;
+    const delta = srDelta({
+      place,
+      players: board.length,
+      kills: mine.kills,
+      deaths: mine.deaths,
+      won: place === 1,
+    });
+    this.onRanked?.(delta, place, board.length);
+  }
+
   /** Call in the operator skill, if it is charged. */
   useSkill() {
     return this.skills.use();
@@ -292,7 +316,11 @@ export class Game {
   private frameMin = 0;
   /** the map is dark, so the goggles are worth carrying */
   night = false;
+  ranked = false;
+  /** fires once when a ranked match ends, with what it was worth */
+  onRanked: ((delta: number, place: number, players: number) => void) | null = null;
   private gogglesOn = false;
+  private rankedDone = false;
 
   setFpsCap(fps: number) {
     this.frameMin = fps > 0 ? 1000 / fps : 0;
@@ -322,6 +350,8 @@ export class Game {
     wardrobe?: Wardrobe,
     skill?: string,
     night = false,
+    ranked = false,
+    sr = START_SR,
   ) {
     this.canvas = canvas;
     this.mode = mode;
@@ -430,6 +460,9 @@ export class Game {
       changed: () => this.onNet?.(),
       localKill: () => this.streaks.addKill(),
     });
+    this.ranked = ranked;
+    // a ranked lobby fills with bots picked for your tier, not the house default
+    if (ranked) this.match.botSkill = tierOf(sr).bots;
     // a hit on another player is reported to them; their client applies it
     this.combat.onRemoteHit = (t, dmg, crit) => this.match.reportHit(t.id, dmg, this.player.eye, crit);
     // a finisher: no health bar survives it, and it reads as its own event
@@ -724,6 +757,7 @@ export class Game {
       this.R.nvg = damp(this.R.nvg, this.gogglesOn ? 1 : 0, 9, dt);
       this.hud.goggles = this.gogglesOn;
       this.hud.night = this.night;
+      this.settleRank();
       this.player.frozen = this.streaks.piloting;
       const view = this.streaks.cameraView();
       if (view) {

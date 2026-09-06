@@ -13,6 +13,7 @@ import {
 } from "./game/attachments";
 import { SKILLS, SKILL_ORDER, sanitizeSkill, type SkillKind } from "./game/skills";
 import { EMOTES, EMOTE_ORDER, type EmoteKind } from "./game/emotes";
+import { nextTier, sanitizeSr, tierOf, tierProgress } from "./game/rank";
 import { BINDABLE, currentBindings, keyLabel, resetBindings, setBinding } from "./game/input";
 import {
   CAMOS,
@@ -201,6 +202,9 @@ export default function App() {
   });
   const [fpsCap, setFpsCap] = useState(() => Number(localStorage.getItem("doodle_fps") || 0));
   const [night, setNight] = useState(() => localStorage.getItem("doodle_night") === "1");
+  const [ranked, setRanked] = useState(() => localStorage.getItem("doodle_ranked") === "1");
+  const [sr, setSr] = useState(() => sanitizeSr(localStorage.getItem("doodle_sr")));
+  const [srSwing, setSrSwing] = useState(0);
   const [playerUid, setPlayerUid] = useState(() => account.uid());
   const [bestD, setBestD] = useState(Number(localStorage.getItem("doodle_best") || 0));
   const [bestZ, setBestZ] = useState(Number(localStorage.getItem("doodle_zbest") || 0));
@@ -219,6 +223,10 @@ export default function App() {
   skillRef.current = skill;
   const nightRef = useRef(night);
   nightRef.current = night;
+  const rankedRef = useRef(ranked);
+  rankedRef.current = ranked;
+  const srRef = useRef(sr);
+  srRef.current = sr;
   const killsRef = useRef(weaponKills);
   killsRef.current = weaponKills;
 
@@ -276,7 +284,14 @@ export default function App() {
       if (Array.isArray(r.profile?.loadout) && r.profile.loadout.length) {
         setLoadout(sanitizeLoadout(r.profile.loadout));
       }
-      const st = r.profile?.settings as { gunsmith?: unknown; skins?: unknown; wkills?: unknown } | undefined;
+      const st = r.profile?.settings as
+        | { gunsmith?: unknown; skins?: unknown; wkills?: unknown; skill?: unknown; sr?: unknown }
+        | undefined;
+      if (st?.sr !== undefined) {
+        const banked = sanitizeSr(st.sr);
+        setSr(banked);
+        localStorage.setItem("doodle_sr", String(banked));
+      }
       const saved = sanitizeGunsmith(st?.gunsmith);
       if (Object.keys(saved).length) setGunsmith(saved);
       const log = sanitizeKills(st?.wkills);
@@ -334,8 +349,25 @@ export default function App() {
       wardrobeRef.current,
       skillRef.current,
       nightRef.current,
+      rankedRef.current,
+      srRef.current,
     );
     g.setFpsCap(Number(localStorage.getItem("doodle_fps") || 0));
+    g.onRanked = (delta) => {
+      setSrSwing(delta);
+      setSr((prev) => {
+        const next = Math.max(0, prev + delta);
+        localStorage.setItem("doodle_sr", String(next));
+        account.saveProfileSoon(loadoutRef.current, {
+          gunsmith: gunsmithRef.current,
+          skins: wardrobeRef.current,
+          wkills: killsRef.current,
+          skill: skillRef.current,
+          sr: next,
+        });
+        return next;
+      });
+    };
     g.onWeaponKill = (k) => {
       setWeaponKills((prev) => {
         const next = { ...prev, [k]: (prev[k] ?? 0) + 1 };
@@ -420,6 +452,12 @@ export default function App() {
             setNight(v);
             localStorage.setItem("doodle_night", v ? "1" : "0");
           }}
+          ranked={ranked}
+          onRanked={(v) => {
+            setRanked(v);
+            localStorage.setItem("doodle_ranked", v ? "1" : "0");
+          }}
+          sr={sr}
           bestD={bestD}
           bestZ={bestZ}
           onSolo={(m) => launch(m)}
@@ -520,8 +558,13 @@ export default function App() {
             setPlayerUid(user.id);
             if (profile?.loadout?.length) setLoadout(sanitizeLoadout(profile.loadout));
             const st = profile?.settings as
-              | { gunsmith?: unknown; skins?: unknown; wkills?: unknown; skill?: unknown }
+              | { gunsmith?: unknown; skins?: unknown; wkills?: unknown; skill?: unknown; sr?: unknown }
               | undefined;
+            if (st?.sr !== undefined) {
+              const banked = sanitizeSr(st.sr);
+              setSr(banked);
+              localStorage.setItem("doodle_sr", String(banked));
+            }
             const kits = sanitizeGunsmith(st?.gunsmith);
             if (Object.keys(kits).length) setGunsmith(kits);
             const log = sanitizeKills(st?.wkills);
@@ -616,6 +659,9 @@ export default function App() {
                 if (gameRef.current) gameRef.current.match.name = (n || "doodle").slice(0, 14);
               }}
               matchMode={matchMode}
+              ranked={ranked}
+              sr={sr}
+              srSwing={srSwing}
               onMenu={toMenu}
             />
           )}
@@ -695,6 +741,25 @@ function Menu({
   );
 }
 
+/** Tier name, SR, and how far through the tier you are. */
+function RankBadge({ sr, swing }: { sr: number; swing?: number }) {
+  const tier = tierOf(sr);
+  const next = nextTier(sr);
+  return (
+    <div className="rank-badge">
+      <b>{tier.name}</b>
+      <span className="sr">
+        {sr} SR
+        {swing ? <em className={swing > 0 ? "up" : "down"}>{swing > 0 ? `+${swing}` : swing}</em> : null}
+      </span>
+      <span className="bar">
+        <i style={{ width: `${tierProgress(sr) * 100}%` }} />
+      </span>
+      <span className="text-[11px] opacity-60">{next ? `${next.at - sr} to ${next.name.toLowerCase()}` : "top of the ladder"}</span>
+    </div>
+  );
+}
+
 /** Pick a mode, and for the multiplayer ones a map, before anything connects. */
 function ModePicker({
   mapKey,
@@ -703,6 +768,9 @@ function ModePicker({
   onMatchMode,
   night,
   onNight,
+  ranked,
+  onRanked,
+  sr,
   bestD,
   bestZ,
   onSolo,
@@ -715,6 +783,9 @@ function ModePicker({
   onMatchMode: (m: MatchMode) => void;
   night: boolean;
   onNight: (v: boolean) => void;
+  ranked: boolean;
+  onRanked: (v: boolean) => void;
+  sr: number;
   bestD: number;
   bestZ: number;
   onSolo: (m: Mode) => void;
@@ -751,7 +822,20 @@ function ModePicker({
         </div>
 
         <div className="mt-8 text-lg uppercase tracking-widest opacity-60">against people</div>
-        <div className="mt-2 flex flex-wrap items-stretch justify-center gap-3">
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+          {(
+            [
+              [false, "casual"],
+              [true, "ranked"],
+            ] as [boolean, string][]
+          ).map(([v, label]) => (
+            <button key={label} className={`gun-chip ${ranked === v ? "on" : ""}`} onClick={() => onRanked(v)}>
+              {label}
+            </button>
+          ))}
+          {ranked && <RankBadge sr={sr} />}
+        </div>
+        <div className="mt-3 flex flex-wrap items-stretch justify-center gap-3">
           {(
             [
               ["ffa", "FREE-FOR-ALL", "everyone against everyone, first to the target score"],
@@ -1259,6 +1343,9 @@ function Online({
   name,
   onName,
   matchMode,
+  ranked,
+  sr,
+  srSwing,
   onMenu,
 }: {
   gameRef: React.RefObject<Game | null>;
@@ -1266,6 +1353,9 @@ function Online({
   name: string;
   onName: (n: string) => void;
   matchMode: MatchMode;
+  ranked: boolean;
+  sr: number;
+  srSwing: number;
   onMenu: () => void;
 }) {
   const [busy, setBusy] = useState("");
@@ -1328,6 +1418,12 @@ function Online({
       <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.72)] p-4">
         <div className="ink-panel max-w-[640px] px-10 py-8 text-center">
           <h2 className="m-0 font-[Caveat,cursive] text-5xl text-[var(--red)]">{m.winner} wins</h2>
+
+          {ranked && (
+            <div className="mt-4 flex justify-center">
+              <RankBadge sr={sr} swing={srSwing} />
+            </div>
+          )}
 
           {mvp && (
             <div className="mvp-card mt-5">
@@ -1473,6 +1569,11 @@ function Online({
         <h2 className="m-0 font-[Caveat,cursive] text-5xl">
           {matchMode === "ffa" ? "free-for-all" : matchMode === "tdm" ? "team deathmatch" : "battle royale"}
         </h2>
+        {ranked && (
+          <div className="mt-3 flex justify-center">
+            <RankBadge sr={sr} />
+          </div>
+        )}
         <p className="mt-1 text-lg opacity-70">no server — you connect straight to the other players</p>
 
         <label className="mt-5 flex flex-col items-center gap-2 text-xl">
