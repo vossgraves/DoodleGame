@@ -1,0 +1,311 @@
+/* Doodle District — scribbled survival shooter */
+:root{
+  --paper:#f6f1e3;
+  --paper2:#efe8d4;
+  --ink:#22242a;
+  --ink2:#4a4d57;
+  --red:#d94f3d;
+  --blue:#3b6fd4;
+  --green:#3f9d63;
+  --zgreen:#7fc46a;
+  --yellow:#e8b731;
+  --card:#fdf9ec;
+  --shadow:rgba(34,36,42,.16);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--paper)}
+body{
+  font-family:"Patrick Hand","Comic Sans MS",cursive;
+  color:var(--ink);
+  -webkit-user-select:none;user-select:none;
+  touch-action:none;
+  overscroll-behavior:none;
+}
+#app{position:fixed;inset:0;overflow:hidden}
+canvas#world{
+  position:absolute;inset:0;width:100%;height:100%;display:block;
+  background:var(--paper);
+  background-image:
+    linear-gradient(rgba(59,111,212,.055) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(59,111,212,.055) 1px,transparent 1px),
+    radial-gradient(circle at 18% 12%,rgba(217,79,61,.05),transparent 40%);
+  background-size:36px 36px,36px 36px,100% 100%;
+  cursor:crosshair;
+}
+.hidden{display:none!important}
+
+/* ---------- doodle panel ---------- */
+.panel{
+  background:var(--card);
+  border:3px solid var(--ink);
+  border-radius:16px 22px 14px 24px;
+  box-shadow:5px 6px 0 var(--shadow);
+  padding:20px 26px;
+  text-align:center;
+  max-width:92vw;
+  transform:rotate(-.4deg);
+}
+.panel.wide{max-width:640px;min-width:min(540px,92vw)}
+.panel.small{padding:10px 16px;border-width:2px}
+h1,h2,h3{font-family:"Shantell Sans","Patrick Hand",cursive;margin:0 0 8px;letter-spacing:.5px}
+h2{font-size:clamp(26px,4.5vw,38px)}
+.menu-panel{padding:26px 30px 18px;min-width:min(420px,92vw)}
+.logo{
+  font-size:clamp(44px,9vw,74px);line-height:.95;font-weight:800;
+  color:var(--ink);margin-bottom:2px;
+  text-shadow:2px 2px 0 rgba(217,79,61,.22);
+}
+.tagline{font-size:18px;color:var(--ink2);margin-bottom:16px}
+.doodle-arrow{color:var(--red);display:inline-block;animation:wiggle 2.2s ease-in-out infinite}
+@keyframes wiggle{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(10deg)}}
+
+/* ---------- buttons ---------- */
+.dbtn{
+  display:block;width:100%;margin:10px 0;
+  font-family:inherit;font-size:22px;font-weight:700;color:var(--ink);
+  background:#fff;
+  border:3px solid var(--ink);
+  border-radius:12px 16px 10px 18px;
+  padding:10px 14px;cursor:pointer;
+  box-shadow:4px 4px 0 var(--shadow);
+  transition:transform .06s,box-shadow .06s;
+}
+.dbtn:hover{transform:translate(-1px,-1px);box-shadow:6px 6px 0 var(--shadow)}
+.dbtn:active{transform:translate(3px,3px);box-shadow:1px 1px 0 var(--shadow)}
+.dbtn:disabled{opacity:.45;cursor:not-allowed}
+.dbtn big{font-size:27px;letter-spacing:1px}
+.dbtn small{display:block;font-size:15px;color:var(--ink2);font-weight:400}
+.dbtn.accent{background:#ffe9b0}
+.dbtn.green{background:#c9f2cf}
+.dbtn.red{background:#ffd9d2}
+.dbtn.small{font-size:16px;padding:6px 10px;margin:6px 0}
+
+/* ---------- settings ---------- */
+.setting-row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  margin:10px 0;font-size:20px;border-bottom:2px dashed rgba(34,36,42,.25);padding-bottom:8px;
+}
+.tog{
+  font-family:inherit;font-size:15px;font-weight:700;color:var(--ink);
+  border:3px solid var(--ink);border-radius:10px;padding:4px 14px;cursor:pointer;background:#fff;
+}
+.tog.on{background:#c9f2cf}
+.setting-row input[type=range]{flex:1;accent-color:var(--red)}
+#set-sens-val{min-width:44px;text-align:right}
+
+/* ---------- screens ---------- */
+.screen{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  z-index:30;background:rgba(246,241,227,.82);backdrop-filter:blur(2px);
+}
+#screen-menu{background:rgba(246,241,227,.5);z-index:40}
+.menu-buttons{margin:14px 0 4px}
+.menu-hi{display:flex;justify-content:space-around;font-size:15px;color:var(--ink2);margin:2px 0 8px}
+.menu-hi span{background:#fff;border:2px solid rgba(34,36,42,.6);border-radius:8px;padding:2px 10px}
+.menu-links{display:flex;gap:10px}
+.menu-links .dbtn{font-size:17px;padding:7px 8px}
+.menu-foot{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center}
+.chip{font-size:13px;border:2px solid rgba(34,36,42,.5);padding:2px 8px;border-radius:99px;background:#fff}
+.cred{width:100%;font-size:12px;color:var(--ink2)}
+#attract-tip{
+  position:absolute;bottom:8%;left:0;right:0;text-align:center;
+  color:var(--ink2);font-size:16px;animation:wiggle 3s ease-in-out infinite;
+}
+
+/* ---------- how to ---------- */
+.howto-cols{display:flex;gap:18px;text-align:left;margin:8px 0}
+.howto-cols>div{flex:1;min-width:0}
+.howto-cols h3{margin-top:0;color:var(--red)}
+.howto-cols ul{margin:0;padding-left:20px;font-size:17px;line-height:1.55}
+.howto-hint{
+  margin:12px 0;padding:8px 12px;font-size:16px;
+  background:#eef7ef;border:2px dashed var(--green);border-radius:10px;text-align:left;
+}
+
+/* ---------- HUD ---------- */
+#hud{position:absolute;inset:0;pointer-events:none;z-index:10;padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left))}
+.panel-card{
+  position:absolute;background:rgba(253,249,236,.92);
+  border:2.5px solid var(--ink);border-radius:12px 16px 10px 18px;
+  padding:8px 12px;box-shadow:3px 3px 0 var(--shadow);
+}
+#hp-wrap{top:0;left:0}
+.hud-label{font-size:12px;letter-spacing:2px;color:var(--ink2)}
+#hp-bar{width:150px;height:14px;border:2px solid var(--ink);border-radius:8px;background:#fff;overflow:hidden;margin:2px 0}
+#hp-fill{height:100%;background:var(--green);width:100%;transition:width .15s,background .2s}
+#hp-text{font-size:13px;position:absolute;top:30px;left:100px;color:var(--ink)}
+#wave-badge{
+  position:absolute;top:-12px;left:150px;background:#fff;border:2.5px solid var(--ink);
+  border-radius:10px;padding:2px 12px;font-family:"Shantell Sans",cursive;font-weight:800;font-size:22px;line-height:1;
+  transform:rotate(3deg);
+}
+#wave-badge small{display:block;font-size:10px;letter-spacing:1px;color:var(--ink2)}
+#enemies-left{font-size:13px;margin-top:2px}
+#score-wrap{top:0;right:0;text-align:right}
+#score{font-family:"Shantell Sans",cursive;font-weight:800;font-size:30px;line-height:1}
+#score-hi{font-size:12px;color:var(--ink2)}
+#combo{font-weight:700;color:var(--red);font-size:18px}
+
+/* boss bar */
+#boss-bar{position:absolute;top:6px;left:50%;transform:translateX(-50%) rotate(-.5deg);width:min(420px,60vw);text-align:center}
+#boss-name{font-family:"Shantell Sans",cursive;font-weight:800;color:var(--red);font-size:18px;text-shadow:1px 1px 0 #fff}
+#boss-track{height:16px;border:2.5px solid var(--ink);border-radius:10px;background:#fff;overflow:hidden}
+#boss-fill{height:100%;background:var(--red);width:100%}
+
+/* weapon chips */
+#weapon-chips{
+  position:absolute;left:0;bottom:0;
+  display:flex;flex-direction:column-reverse;gap:5px;max-height:60vh;width:230px;
+}
+.wchip{
+  display:flex;align-items:center;gap:8px;
+  background:rgba(253,249,236,.9);border:2.5px solid var(--ink);
+  border-radius:10px 14px 8px 16px;padding:4px 9px;font-size:16px;
+  box-shadow:3px 3px 0 var(--shadow);
+  transform:rotate(-1deg);
+}
+.wchip .key{font-weight:700;color:var(--ink2);min-width:16px}
+.wchip .nm{font-weight:700}
+.wchip .am{font-size:14px}
+.wchip.active{background:#ffe9b0;border-width:3px;transform:rotate(1deg) scale(1.04)}
+.wchip .dst{font-size:11px;color:var(--ink2)}
+
+/* abilities */
+#ability-wrap{bottom:0;right:0;display:flex;gap:10px;padding:10px 12px}
+.ability{position:relative;width:52px;text-align:center;font-size:11px;font-weight:700;color:var(--ink2)}
+.ability-ring{
+  width:44px;height:44px;border-radius:50%;border:3px solid var(--ink);
+  background:radial-gradient(circle at 35% 30%,#fff,#e8e2cf);margin:0 auto;
+}
+.ability.ready .ability-ring{background:radial-gradient(circle at 35% 30%,#fff9c9,#ffd76a);box-shadow:0 0 12px #ffd76a}
+.ability.ready span{color:var(--red)}
+.ability.dash-mode .ability-ring{background:radial-gradient(circle at 35% 30%,#d8f7ff,#7fd0f0)}
+#grenade-count{font-size:15px;font-weight:700}
+
+/* toasts */
+#toasts{position:absolute;top:16%;left:50%;transform:translateX(-50%);z-index:20;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+.toast{
+  background:rgba(34,36,42,.88);color:#fff;font-size:19px;padding:6px 18px;
+  border-radius:99px;animation:toastIn 2.6s ease forwards;white-space:nowrap;
+}
+.toast.good{background:rgba(63,157,99,.92)}
+.toast.warn{background:rgba(217,79,61,.92)}
+@keyframes toastIn{0%{opacity:0;transform:translateY(-14px) scale(.8)}12%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0;transform:translateY(6px)}}
+
+/* banner (wave starts / mode) */
+#banner{position:absolute;top:32%;left:0;right:0;text-align:center;z-index:15;pointer-events:none}
+#banner-title{
+  font-family:"Shantell Sans",cursive;font-weight:800;font-size:clamp(38px,9vw,84px);
+  color:var(--ink);text-shadow:3px 3px 0 #fff;letter-spacing:2px;
+  animation:bannerIn 3s ease forwards;
+}
+#banner-sub{font-size:clamp(15px,3vw,22px);color:var(--ink2);animation:bannerIn 3s ease forwards}
+@keyframes bannerIn{0%{opacity:0;transform:scale(.6) rotate(-4deg)}14%{opacity:1;transform:none}78%{opacity:1}100%{opacity:0;transform:translateY(-16px)}}
+
+/* first-time hint */
+#hint{position:absolute;bottom:12%;left:0;right:0;display:flex;justify-content:center;z-index:12;pointer-events:none}
+#hint-text{font-size:17px}
+#hint-sub{display:block;font-size:13px;color:var(--ink2)}
+
+/* ---------- touch controls ---------- */
+#touch-ui{position:absolute;inset:0;z-index:18;pointer-events:none}
+.stick{
+  position:absolute;width:150px;height:150px;opacity:.85;
+}
+.stick-base{
+  position:absolute;inset:0;border-radius:50%;
+  border:3px dashed rgba(34,36,42,.55);background:rgba(253,249,236,.35);
+}
+.stick-knob{
+  position:absolute;width:66px;height:66px;border-radius:50%;
+  border:3px solid var(--ink);background:rgba(255,233,176,.9);
+  left:50%;top:50%;transform:translate(-50%,-50%);
+  display:flex;align-items:center;justify-content:center;
+  font-family:"Shantell Sans",cursive;font-weight:800;font-size:12px;color:var(--ink2);
+}
+.stick.active{opacity:1}
+.stick.active .stick-knob{background:#ffd76a}
+#stick-move{left:24px;bottom:96px}
+#stick-move .stick-knob{transform:translate(-50%,-50%)}
+#stick-aim{right:24px;bottom:96px}
+#stick-aim .stick-knob{font-size:12px}
+.tbtn{
+  position:absolute;pointer-events:auto;
+  font-family:"Shantell Sans",cursive;font-weight:800;color:var(--ink);
+  border:3px solid var(--ink);border-radius:50%;
+  box-shadow:4px 4px 0 var(--shadow);
+  background:rgba(255,255,255,.8);
+}
+.tbtn:active{background:rgba(255,217,210,.9)}
+.tbtn span{pointer-events:none}
+.tbtn.fire{
+  width:96px;height:96px;right:178px;bottom:36px;
+  background:rgba(255,180,160,.9);font-size:15px;
+}
+.tbtn.small{width:44px;height:44px;right:10px;top:106px;bottom:auto;font-size:11px;background:rgba(253,249,236,.92)}
+#btn-dash{width:72px;height:72px;right:296px;bottom:118px;background:rgba(178,222,247,.9);font-size:12px}
+#btn-grenade{width:64px;height:64px;right:300px;bottom:26px;font-size:20px}
+#btn-reload{width:66px;height:66px;right:64px;bottom:276px;font-size:12px}
+#btn-weapon{width:66px;height:66px;right:152px;bottom:276px;font-size:18px}
+#btn-dash.cooldown{filter:grayscale(.9);opacity:.55}
+#btn-dash.ready{background:rgba(255,215,106,.95)}
+
+/* ---------- shop ---------- */
+.shop-tag{
+  font-size:14px;background:#e4f2e6;color:var(--zgreen);border:2px dashed var(--zgreen);
+  border-radius:99px;padding:2px 12px;vertical-align:middle;
+}
+.shop-lead{font-size:17px;color:var(--ink2)}
+#shop-cards{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:12px 0}
+.shop-card{
+  flex:1 1 150px;max-width:190px;min-height:120px;
+  background:#fff;border:3px solid var(--ink);border-radius:14px 18px 12px 20px;
+  padding:10px;cursor:pointer;font-family:inherit;text-align:center;
+  box-shadow:3px 3px 0 var(--shadow);transition:transform .08s;
+}
+.shop-card:hover{transform:translate(-2px,-2px) rotate(-.5deg)}
+.shop-card .ic{font-size:30px}
+.shop-card .tt{font-family:"Shantell Sans",cursive;font-weight:800;font-size:16px}
+.shop-card .ds{font-size:13px;color:var(--ink2);line-height:1.25}
+.shop-card .lv{font-size:12px;color:var(--red);font-weight:700}
+#shop-buys{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+#shop-buys .dbtn{width:auto;font-size:17px;padding:8px 14px}
+#shop-buys .dbtn small{display:inline;font-size:13px;color:var(--ink2)}
+#shop-coin-line{font-family:"Shantell Sans",cursive;font-weight:800;font-size:20px;margin:10px 0 2px}
+
+/* ---------- game over ---------- */
+#over-stats,#pause-stats{
+  font-size:18px;line-height:1.7;margin:8px 0 12px;
+}
+#over-hi{font-size:15px;color:var(--ink2);margin-bottom:8px}
+#over-title.zombies{color:var(--green)}
+#rot-tip{
+  position:absolute;top:12px;left:50%;transform:translateX(-50%);
+  background:rgba(34,36,42,.85);color:#fff;font-size:14px;padding:4px 14px;border-radius:99px;z-index:9;
+}
+
+/* small screens */
+@media (max-width:640px){
+  .panel{padding:14px 16px}
+  .stick{width:128px;height:128px}
+  #stick-move{left:14px;bottom:86px}
+  #stick-aim{right:14px;bottom:86px}
+  .tbtn.fire{right:158px;bottom:28px;width:88px;height:88px}
+  #btn-dash{right:264px;bottom:104px}
+  #btn-grenade{right:268px;bottom:20px}
+  #btn-reload{right:60px;bottom:246px}
+  #btn-weapon{right:142px;bottom:246px}
+  .panel.wide{min-width:0;width:94vw;max-height:86vh;overflow:auto}
+  .howto-cols{flex-direction:column;gap:6px}
+  .howto-cols ul{font-size:15px}
+  #score-wrap{top:auto;bottom:0}
+  #hp-bar{width:110px}
+  #wave-badge{left:112px}
+  #hp-text{left:76px}
+  #weapon-chips{width:120px}
+  .wchip{font-size:13px;padding:2px 6px}
+  .wchip .dst{display:none}
+  #ability-wrap{bottom:auto;top:84px;right:0;transform:scale(.85);transform-origin:top right}
+  #banner{top:22%}
+  #hint{bottom:auto;top:64%}
+}

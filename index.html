@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#f6f1e4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Doodle District — a scribbled survival shooter</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">✏️</text></svg>'>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=Shantell+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+
+  <canvas id="world"></canvas>
+
+  <!-- ============ HUD ============ -->
+  <div id="hud" class="hidden">
+    <div id="hp-wrap" class="panel-card">
+      <div class="hud-label">HP</div>
+      <div id="hp-bar"><div id="hp-fill"></div></div>
+      <div id="hp-text">100</div>
+      <div id="wave-badge"><span id="wave-num">1</span><small>WAVE</small></div>
+      <div id="enemies-left"><b id="enemies-num">0</b> enemies left</div>
+    </div>
+
+    <div id="score-wrap" class="panel-card">
+      <div class="hud-label">SCORE</div>
+      <div id="score">0</div>
+      <div id="score-hi">BEST 0</div>
+      <div id="combo" class="hidden">×<span id="combo-num">1</span></div>
+    </div>
+
+    <div id="boss-bar" class="hidden">
+      <div id="boss-name">MEGA ZOMBIE</div>
+      <div id="boss-track"><div id="boss-fill"></div></div>
+    </div>
+
+    <div id="weapon-chips"></div>
+
+    <div id="ability-wrap" class="panel-card">
+      <div id="grenade-count">💣 ×2</div>
+      <div class="ability" id="dash-dot" title="Dash ready"><div class="ability-ring"></div><span>DASH</span></div>
+      <div class="ability" id="katana-dot" title="Dash-slash ready"><div class="ability-ring"></div><span>SLASH</span></div>
+    </div>
+
+    <button id="btn-hud-pause" class="tbtn small" title="Pause">❚❚</button>
+  </div>
+
+  <!-- ============ MOBILE TOUCH CONTROLS ============ -->
+  <div id="touch-ui" class="hidden">
+    <div id="stick-move" class="stick"><div class="stick-base"></div><div class="stick-knob"><span>MOVE</span></div></div>
+    <div id="stick-aim" class="stick"><div class="stick-base"></div><div class="stick-knob"><span>AIM</span></div></div>
+    <button id="btn-fire" class="tbtn fire"><span>FIRE</span></button>
+    <button id="btn-dash" class="tbtn"><span>DASH</span></button>
+    <button id="btn-grenade" class="tbtn"><span>💣</span></button>
+    <button id="btn-reload" class="tbtn"><span>RLD</span></button>
+    <button id="btn-weapon" class="tbtn"><span>▤</span></button>
+  </div>
+
+  <div id="banner" class="hidden"><div id="banner-title"></div><div id="banner-sub"></div></div>
+  <div id="toasts"></div>
+
+  <!-- ============ MAIN MENU ============ -->
+  <div id="screen-menu" class="screen">
+    <div class="panel menu-panel">
+      <h1 class="logo">DOODLE<br>DISTRICT</h1>
+      <div class="tagline">a scribbled survival shooter <span class="doodle-arrow">✎</span></div>
+      <div class="menu-buttons">
+        <button id="btn-district" class="dbtn big accent">DISTRICT&nbsp;<small>solo · survive the waves</small></button>
+        <button id="btn-zombies" class="dbtn big green">ZOMBIES&nbsp;<small>horde survival · no mercy</small></button>
+      </div>
+      <div class="menu-hi">
+        <span id="hi-district">BEST —</span><span id="hi-zombies">BEST —</span>
+      </div>
+      <div class="menu-links">
+        <button id="btn-howto" class="dbtn">HOW TO PLAY</button>
+        <button id="btn-settings" class="dbtn">⚙ SETTINGS</button>
+      </div>
+      <div class="menu-foot">
+        <span class="chip">🖱 MOUSE + KEYS</span><span class="chip">📱 TOUCH</span>
+        <span class="cred">fan-made doodle tribute · no assets, all scribbles</span>
+      </div>
+    </div>
+    <div id="attract-tip" class="hidden">◂ cartoon doodles wander the paper — your district awaits ▸</div>
+  </div>
+
+  <!-- ============ HOW TO PLAY ============ -->
+  <div id="screen-howto" class="screen hidden">
+    <div class="panel wide">
+      <h2>HOW TO PLAY</h2>
+      <div class="howto-cols">
+        <div>
+          <h3>🖱 DESKTOP</h3>
+          <ul>
+            <li><b>WASD</b> move · <b>Mouse</b> aim</li>
+            <li><b>LMB</b> fire / slash · <b>Shift</b> sprint</li>
+            <li><b>C / Ctrl / Space</b> dash (i-frames!) · <b>R</b> reload</li>
+            <li><b>F</b> quick katana slash · fill the gauge → <b>dash-slash</b></li>
+            <li><b>G</b> grenade — hold for a longer throw</li>
+            <li><b>1–5 / wheel</b> weapons · <b>P / Esc</b> pause · <b>M</b> music</li>
+          </ul>
+        </div>
+        <div>
+          <h3>📱 MOBILE</h3>
+          <ul>
+            <li><b>Left stick</b> move (push far = sprint)</li>
+            <li><b>Right stick</b> aim &amp; fire</li>
+            <li><b>FIRE</b> shoots nearest enemy (aim assist)</li>
+            <li><b>DASH</b> dodge · <b>💣</b> hold to lob further</li>
+            <li><b>RLD</b> reload · <b>▤</b> next weapon</li>
+          </ul>
+        </div>
+      </div>
+      <div class="howto-hint">
+        <b>ZOMBIES:</b> survive the waves · coins drop from kills · between waves pick 1 upgrade or buy heals.<br>
+        <b>BOSS every 5th wave.</b> Stay moving. The horde hears you.
+      </div>
+      <button id="btn-howto-close" class="dbtn big">GOT IT</button>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS ============ -->
+  <div id="screen-settings" class="screen hidden">
+    <div class="panel">
+      <h2>⚙ SETTINGS</h2>
+      <div class="setting-row"><span>Music</span><button id="set-music" class="tog on">ON</button></div>
+      <div class="setting-row"><span>Sound FX</span><button id="set-sfx" class="tog on">ON</button></div>
+      <div class="setting-row"><span>Vibration</span><button id="set-vibe" class="tog on">ON</button></div>
+      <div class="setting-row"><span>Aim assist (touch)</span><button id="set-assist" class="tog on">ON</button></div>
+      <div class="setting-row"><span>Touch controls on desktop</span><button id="set-touch" class="tog off">OFF</button></div>
+      <div class="setting-row"><span>Sensitivity</span><input id="set-sens" type="range" min="40" max="200" value="100"><b id="set-sens-val">100%</b></div>
+      <button id="btn-settings-close" class="dbtn big">DONE</button>
+    </div>
+  </div>
+
+  <!-- ============ PAUSE ============ -->
+  <div id="screen-pause" class="screen hidden">
+    <div class="panel">
+      <h2>PAUSED</h2>
+      <div id="pause-stats"></div>
+      <button id="btn-resume" class="dbtn big">RESUME</button>
+      <button id="btn-restart" class="dbtn">RESTART</button>
+      <button id="btn-pause-settings" class="dbtn">SETTINGS</button>
+      <button id="btn-quit" class="dbtn">QUIT TO MENU</button>
+      <button id="btn-pause-music" class="dbtn">🎵 MUSIC: ON</button>
+    </div>
+  </div>
+
+  <!-- ============ SHOP (between zombie waves) ============ -->
+  <div id="screen-shop" class="screen hidden">
+    <div class="panel wide">
+      <h2>WAVE <span id="shop-wave">1</span> CLEARED <span class="shop-tag">☣ NIGHT SHOP</span></h2>
+      <div class="shop-lead">Pick <b>one</b> upgrade — or buy supplies with your coins.</div>
+      <div id="shop-cards"></div>
+      <div id="shop-buys">
+        <button id="shop-heal" class="dbtn">🩹 +40 HP <small id="shop-heal-c">30¢</small></button>
+        <button id="shop-ammo" class="dbtn">📦 FULL AMMO <small>20¢</small></button>
+        <button id="shop-grenade" class="dbtn">💣 +1 GRENADE <small id="shop-grenade-c">15¢</small></button>
+      </div>
+      <div id="shop-coin-line">COINS <span id="shop-coins">0</span></div>
+      <button id="btn-next-wave" class="dbtn big green">NEXT WAVE →</button>
+    </div>
+  </div>
+
+  <!-- ============ GAME OVER ============ -->
+  <div id="screen-over" class="screen hidden">
+    <div class="panel">
+      <h2 id="over-title">GAME OVER</h2>
+      <div id="over-stats"></div>
+      <div id="over-hi"></div>
+      <button id="btn-retry" class="dbtn big">RETRY</button>
+      <button id="btn-menu" class="dbtn">MAIN MENU</button>
+    </div>
+  </div>
+
+  <!-- first-time controls hint -->
+  <div id="hint" class="hidden">
+    <div class="panel small">
+      <b id="hint-text">WASD move · mouse aim · LMB fire · C dash · F katana · G grenade</b>
+      <small id="hint-sub">(touch: left stick move · right stick aim+fire)</small>
+    </div>
+  </div>
+
+  <div id="rot-tip" class="hidden">↻ rotate for a bigger view</div>
+</div>
+
+<script src="js/utils.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/input.js"></script>
+<script src="js/weapons.js"></script>
+<script src="js/entities.js"></script>
+<script src="js/game.js"></script>
+<script src="js/game2.js"></script>
+<script src="js/game3.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
