@@ -77,13 +77,13 @@ const SHAPES: Record<string, React.ReactNode> = {
       <path d="M14 14.5h8" />
     </>
   ),
-  katana: (
+  knife: (
     <>
-      {/* karambit: finger ring, short grip, curved talon blade */}
-      <circle cx="9" cy="15" r="3.4" />
-      <path d="M12.2 13.8 19 11.4" />
-      <path d="M19 11.4c6.5-3.4 14-1.6 17 4.6-3.4-4.2-9.6-4.6-14.6-1.4z" />
-      <path d="M14.5 16.5l3-1" />
+      {/* switchblade: casing, pivot rivet, blade snapped out of the front */}
+      <path d="M5 12.5h18.5v5.5H7a2 2 0 0 1-2-2z" />
+      <circle cx="21.5" cy="15.2" r="1.3" />
+      <path d="M23.5 12.8 44 9.5l-3 4.4-17.5 1.2z" />
+      <path d="M26.5 12.4v-2" />
     </>
   ),
 };

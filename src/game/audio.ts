@@ -119,7 +119,7 @@ export class AudioSys {
     this.noiseBurst(0.22, 2400, 0.9, 0.32);
     this.beep(140, 0.2, "square", 0.14, 0.3);
   }
-  katana() {
+  blade() {
     this.ensure();
     this.noiseBurst(0.1, 3200, 2.4, 0.12, "highpass");
     this.beep(880, 0.08, "triangle", 0.06, 0.5);

@@ -52,7 +52,7 @@ const emptyHud = (): HudSnap => ({
   slots: [],
   spread: 10,
   ads: false,
-  katana: false,
+  melee: false,
   boss: null,
   message: "",
   sub: "",
@@ -409,7 +409,7 @@ function Menu({
             <div className="text-sm opacity-70">WAVE SURVIVAL</div>
             <div className="font-[Caveat,cursive] text-4xl">DISTRICT</div>
             <p className="mt-2 text-lg leading-snug opacity-80">
-              doodle goons, rooftops, rifles and a katana. clear waves. don&apos;t get sketched out.
+              doodle goons, rooftops, rifles and a switchblade. clear waves. don&apos;t get sketched out.
             </p>
             <div className="mt-3 text-lg">
               best <b className="text-[var(--red)]">{bestD}</b>
@@ -526,7 +526,7 @@ function HowTo({ onBack, touch }: { onBack: () => void; touch: boolean }) {
             <p>they do not stop. headshots erase faster. tanks shrug off pellets. spitters paint the page. ammo drops from the fallen.</p>
           </div>
         </div>
-        <p className="mt-5 text-center text-lg opacity-80">katana (slot 4) slashes. hold aim to guard. three kills charge a focus dash.</p>
+        <p className="mt-5 text-center text-lg opacity-80">the switchblade (slot 4) slashes. hold aim to guard. three kills charge a focus dash.</p>
         <div className="mt-6 text-center">
           <button className="ink-btn" onClick={onBack}>
             back
@@ -1048,7 +1048,7 @@ function LoadoutScreen({
   onBack: () => void;
 }) {
   const carried = loadout.filter(isGun);
-  const melee = loadout.find((k) => !isGun(k)) ?? "katana";
+  const melee = loadout.find((k) => !isGun(k)) ?? "knife";
 
   const setSlot = (slot: number, kind: WeaponKind) => {
     const next = [...carried];
@@ -1135,7 +1135,7 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
         <div className="cy" />
       </div>
       <div
-        className={`crosshair ${hud.katana ? "katana" : ""} ${hud.ads ? "ads" : ""}`}
+        className={`crosshair ${hud.melee ? "melee" : ""} ${hud.ads ? "ads" : ""}`}
         style={{ ["--s" as string]: `${hud.spread}px` }}
       >
         <i className="ch-t" />
@@ -1256,8 +1256,8 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
         </>
       )}
 
-      <div className={`focus-meter hud-bit ${hud.katana ? "on" : ""} ${hud.focusReady ? "ready" : ""}`}>
-        <div className="text-[10px] tracking-widest">KATANA</div>
+      <div className={`focus-meter hud-bit ${hud.melee ? "on" : ""} ${hud.focusReady ? "ready" : ""}`}>
+        <div className="text-[10px] tracking-widest">BLADE</div>
         <div className="fm-tube">
           <div className="fm-fill" style={{ height: `${hud.focusFrac * 100}%` }} />
         </div>

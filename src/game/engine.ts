@@ -38,7 +38,7 @@ export interface HudSnap {
   slots: { name: string; kind: string; ammo: string; active: boolean; empty: boolean }[];
   spread: number;
   ads: boolean;
-  katana: boolean;
+  melee: boolean;
   boss: { name: string; frac: number } | null;
   message: string;
   sub: string;
@@ -76,7 +76,7 @@ const defaultHud = (): HudSnap => ({
   slots: [],
   spread: 10,
   ads: false,
-  katana: false,
+  melee: false,
   boss: null,
   message: "",
   sub: "",
@@ -350,7 +350,7 @@ export class Game {
     const r = this.combat.slash(origin, dir, dmg, heavy, this.player);
     if (r.hit) {
       this.markHit(r.kill, r.crit);
-      this.player.katanaStreak += r.kill ? 1 : 0;
+      this.player.meleeStreak += r.kill ? 1 : 0;
       this.hitstopT = heavy ? 0.08 : 0.04;
     }
     if (r.kill) {
@@ -365,7 +365,7 @@ export class Game {
     this.combo = Math.min(12, this.combo + 1);
     this.comboT = 2.6;
     this.addScore(pts, (crit ? "HEAD! " : "") + name);
-    if (this.player.weapon.def.kind === "katana") this.player.katanaStreak += 1;
+    if (!this.player.weapon.def.isGun) this.player.meleeStreak += 1;
   }
 
   addScore(pts: number, label: string) {
@@ -528,7 +528,7 @@ export class Game {
     }));
     this.hud.spread = 8 + wpn.spreadCur * 180;
     this.hud.ads = this.player.aiming;
-    this.hud.katana = wpn.def.kind === "katana";
+    this.hud.melee = !wpn.def.isGun;
     this.hud.boss = boss ? { name: boss.def.name, frac: clamp(boss.hp / boss.maxHp, 0, 1) } : null;
     this.hud.low = this.player.hp / this.player.maxHp < 0.3;
     this.hud.kills = this.kills;
@@ -537,8 +537,8 @@ export class Game {
     this.hud.mode = this.mode;
     this.hud.state = this.state;
     this.hud.waveLabel = this.mode === "zombies" ? "HORDE" : "WAVE";
-    this.hud.focusFrac = clamp(this.player.katanaStreak / 3, 0, 1);
-    this.hud.focusReady = this.player.katanaStreak >= 3;
+    this.hud.focusFrac = clamp(this.player.meleeStreak / 3, 0, 1);
+    this.hud.focusReady = this.player.meleeStreak >= 3;
 
     this.R.setHurt(this.player.hurtFx);
     this.R.setFlash(this.player.flashFx);

@@ -213,11 +213,11 @@ canvas.game-canvas {
   top: -1.5px;
   border-radius: 50%;
 }
-.crosshair.katana i {
+.crosshair.melee i {
   background: var(--ink);
 }
-.crosshair.katana .ch-l,
-.crosshair.katana .ch-r {
+.crosshair.melee .ch-l,
+.crosshair.melee .ch-r {
   display: none;
 }
 .crosshair.ads {

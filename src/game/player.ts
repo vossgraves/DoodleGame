@@ -14,7 +14,7 @@ export type WeaponKind =
   | "sniper"
   | "revolver"
   | "pistol"
-  | "katana";
+  | "knife";
 
 export interface WeaponDef {
   kind: WeaponKind;
@@ -121,9 +121,9 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
     cycleDur: 0.8,
     isGun: true,
   },
-  katana: {
-    kind: "katana",
-    name: "KATANA",
+  knife: {
+    kind: "knife",
+    name: "SWITCHBLADE",
     hint: "slash · hold aim to guard",
     magSize: 0,
     reserve: 0,
@@ -277,25 +277,32 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
 
 /** Every weapon, for loadout UIs. Guns first, melee last. */
 export const WEAPONS: { kind: WeaponKind; name: string; hint: string; isGun: boolean }[] = (
-  ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "katana"] as WeaponKind[]
+  ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "knife"] as WeaponKind[]
 ).map((k) => ({ kind: k, name: DEFS[k].name, hint: DEFS[k].hint, isGun: DEFS[k].isGun }));
 
 export const GUN_KINDS = WEAPONS.filter((w) => w.isGun).map((w) => w.kind);
 export const MELEE_KINDS = WEAPONS.filter((w) => !w.isGun).map((w) => w.kind);
-export const DEFAULT_LOADOUT: WeaponKind[] = ["rifle", "shotgun", "sniper", "katana"];
+export const DEFAULT_LOADOUT: WeaponKind[] = ["rifle", "shotgun", "sniper", "knife"];
+
+/** Names that used to exist, so an old saved loadout still works. */
+const LEGACY_KINDS: Record<string, WeaponKind> = { katana: "knife" };
 
 /** Drop anything unknown and guarantee a usable set of slots. */
 export function sanitizeLoadout(raw: unknown): WeaponKind[] {
   const all = new Set(WEAPONS.map((w) => w.kind));
-  const list = Array.isArray(raw) ? raw.filter((k): k is WeaponKind => all.has(k as WeaponKind)) : [];
+  const list = (Array.isArray(raw) ? raw : [])
+    .map((k) => (typeof k === "string" && LEGACY_KINDS[k] ? LEGACY_KINDS[k] : k))
+    .filter((k): k is WeaponKind => all.has(k as WeaponKind));
   const guns = list.filter((k) => DEFS[k].isGun).slice(0, 3);
   if (!guns.length) return [...DEFAULT_LOADOUT];
-  const melee = list.find((k) => !DEFS[k].isGun) ?? "katana";
+  const melee = list.find((k) => !DEFS[k].isGun) ?? "knife";
   return [...guns, melee];
 }
 
 /** How long a weapon takes to swing up after a switch. */
 export const EQUIP_DUR = 0.34;
+/** How far back the blade sits when folded into the handle. */
+const BLADE_RETRACT = 0.47;
 
 function bx(w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, parent: THREE.Object3D) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -337,6 +344,8 @@ export class Weapon {
   root: THREE.Group;
   flash: THREE.Group;
   blade: THREE.Object3D | null = null;
+  /** the sliding part of a switchblade; null for everything else */
+  edge: THREE.Object3D | null = null;
   blocking = false;
   blockT = 0;
   slashT = 0;
@@ -431,13 +440,24 @@ export class Weapon {
       this.placeFlash(0, 0.05, -0.42, 0.7);
       this.hand(0.12, -0.08, 0.02);
     } else {
-      // katana
-      const blade = new THREE.Group();
-      bx(0.035, 0.06, 1.15, 0, 0.02, -0.55, makeInkMaterial({ ink: INK.BLACK, fill: true }), blade);
-      bx(0.08, 0.08, 0.18, 0, 0.02, 0.08, b, blade);
-      bx(0.12, 0.03, 0.03, 0, 0.02, 0.0, m, blade);
-      this.root.add(blade);
-      this.blade = blade;
+      // Switchblade: a fixed casing plus a blade that lives inside it and snaps
+      // forward when the knife is drawn.
+      const knife = new THREE.Group();
+      const steel = makeInkMaterial({ ink: INK.BLACK, fill: true });
+      bx(0.085, 0.1, 0.42, 0, 0.02, 0.05, b, knife); // casing
+      bx(0.095, 0.02, 0.34, 0, 0.065, 0.03, m, knife); // seam down the side
+      bx(0.105, 0.04, 0.04, 0, 0.0, -0.12, m, knife); // pivot rivet
+
+      const edge = new THREE.Group();
+      bx(0.028, 0.062, 0.52, 0, 0.02, -0.42, steel, edge);
+      bx(0.034, 0.016, 0.44, 0, 0.048, -0.4, m, edge); // bevel
+      bx(0.062, 0.035, 0.035, 0, 0.055, -0.2, m, edge); // thumb stud
+      knife.add(edge);
+
+      this.root.add(knife);
+      this.blade = knife;
+      this.edge = edge;
+      edge.position.z = BLADE_RETRACT;
       this.hand(0.05, -0.08, 0.12);
     }
     this.root.visible = false;
@@ -523,6 +543,12 @@ export class Weapon {
       this.blade.rotation.x = damp(this.blade.rotation.x, guard * -0.9 + (this.slashT > 0 ? 1.2 : 0), 16, dt);
       this.blade.rotation.z = damp(this.blade.rotation.z, this.slashT > 0 ? 0.8 : guard * -0.3, 18, dt);
     }
+    if (this.edge) {
+      // hold folded while the knife comes up, then snap out over the last third
+      const p = clamp(1 - this.equipT / (EQUIP_DUR * 0.62), 0, 1);
+      const out = 1 - (1 - p) ** 3;
+      this.edge.position.z = BLADE_RETRACT * (1 - out);
+    }
     if (this.blocking) this.blockT += dt;
     else this.blockT = 0;
   }
@@ -601,7 +627,7 @@ export class Player {
   deathT = 0;
   rig = new THREE.Group();
   lookDelta = new THREE.Vector2();
-  katanaStreak = 0;
+  meleeStreak = 0;
   private lastGround = true;
 
   constructor(hooks: PlayerHooks) {
@@ -635,7 +661,7 @@ export class Player {
     this.lastDamageT = 10;
     this.dashCd = 0;
     this.airJumps = 1;
-    this.katanaStreak = 0;
+    this.meleeStreak = 0;
     for (const w of this.weapons) {
       if (w.def.isGun) {
         w.mag = w.def.magSize;
@@ -700,7 +726,7 @@ export class Player {
 
   takeDamage(amount: number, from: THREE.Vector3 | null) {
     if (!this.alive) return;
-    if (this.weapon.def.kind === "katana" && this.weapon.blocking && from) {
+    if (!this.weapon.def.isGun && this.weapon.blocking && from) {
       const to = new THREE.Vector3().subVectors(from, this.eye).normalize();
       if (to.dot(this.forward) > 0.45) {
         amount *= 0.35;
@@ -762,8 +788,8 @@ export class Player {
     this.yaw += i.look.x;
     this.pitch = clamp(this.pitch + i.look.y, -1.45, 1.45);
 
-    this.aiming = i.down("aim") && this.weapon.def.kind !== "katana";
-    this.weapon.blocking = this.weapon.def.kind === "katana" && i.down("aim");
+    this.aiming = i.down("aim") && this.weapon.def.isGun;
+    this.weapon.blocking = !this.weapon.def.isGun && i.down("aim");
 
     if (i.pressed("slot1")) this.switchTo(0);
     if (i.pressed("slot2")) this.switchTo(1);
@@ -875,16 +901,16 @@ export class Player {
     const canFire = !this.weapon.reloading && this.weapon.fireT <= 0 && this.weapon.cycleT <= 0;
     const fireHeld = i.down("fire");
     const firePress = i.pressed("fire");
-    if (this.weapon.def.kind === "katana") {
+    if (!this.weapon.def.isGun) {
       if (firePress && canFire && !this.weapon.blocking) {
         this.weapon.fireT = this.weapon.def.interval;
         this.weapon.slashT = 0.22;
-        this.hooks.audio.katana();
+        this.hooks.audio.blade();
         this.recoilP.kick(this.weapon.def.camKick[0] * 20);
-        const heavy = this.katanaStreak >= 3;
+        const heavy = this.meleeStreak >= 3;
         this.hooks.onSlash(this.eye.clone(), this.forward.clone(), this.weapon.def.damage * (heavy ? 1.8 : 1), heavy);
         if (heavy) {
-          this.katanaStreak = 0;
+          this.meleeStreak = 0;
           this.vel.addScaledVector(this.forward, 8);
           this.fovKick.kick(90);
         }
