@@ -1203,9 +1203,15 @@ export function getMap(key: string): MapDef {
   return MAPS.find((m) => m.key === key) ?? district;
 }
 
-export function buildLevel(scene: THREE.Scene, world: World, mode: Mode, mapKey: string = DEFAULT_MAP): Level {
+export function buildLevel(
+  scene: THREE.Scene,
+  world: World,
+  mode: Mode,
+  mapKey: string = DEFAULT_MAP,
+  night = false,
+): Level {
   const def = getMap(mapKey);
-  const k = new MapKit(scene, world, mode === "zombies");
+  const k = new MapKit(scene, world, mode === "zombies" || night);
   def.build(k);
 
   // ground heights are only valid once every collider exists

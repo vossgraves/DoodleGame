@@ -1392,3 +1392,30 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   font-size: 15px;
   text-align: center;
 }
+
+/* ---- night goggles ------------------------------------------------------ */
+.nvg-pip {
+  position: absolute;
+  left: 50%;
+  bottom: 10%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 2px solid var(--ink);
+  border-radius: 9px;
+  background: rgba(246, 243, 230, 0.5);
+  color: var(--ink);
+  opacity: 0.5;
+}
+.nvg-pip.on {
+  border-color: var(--green);
+  color: var(--green);
+  opacity: 1;
+}
+.nvg-pip em {
+  font-style: normal;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}

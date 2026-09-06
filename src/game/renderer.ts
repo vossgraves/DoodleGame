@@ -86,6 +86,7 @@ uniform float uHurt;
 uniform float uFlash;
 uniform float uLowHp;
 uniform float uNight;
+uniform float uNvg;
 uniform vec3 uPaper;
 uniform vec3 uInks[6];
 
@@ -195,10 +196,25 @@ void main() {
   col = mix(col, vec3(1.0, 0.95, 0.85), uFlash * 0.55);
   float vig = smoothstep(0.95, 0.35, length((vUv - 0.5) * vec2(1.15, 1.0)));
   col *= 0.78 + 0.22 * vig;
-  col = mix(col, col * vec3(0.82, 0.78, 0.92), uNight * 0.35);
+  // Night dims the page towards a cold blue-grey rather than tinting it, so
+  // seeing anything at range is genuinely harder and the goggles are worth a slot.
+  col = mix(col, col * vec3(0.30, 0.32, 0.52) + vec3(0.02, 0.025, 0.05), uNight * 0.92);
   col = mix(col, vec3(0.55, 0.08, 0.1), uLowHp * 0.18 * (1.0 - vig));
   float fleck = step(0.996, hash21(floor(vUv * uRes * 0.25) + floor(uTime * 0.0)));
   col = mix(col, inkColor(0.0), fleck * 0.25);
+
+  // Goggles: everything through one green channel, lifted hard, with the tube's
+  // own vignette and a little sensor noise.
+  if (uNvg > 0.001) {
+    // stretch the darks without crushing the lights, or every shape washes out
+    float lum = dot(col, vec3(0.34, 0.5, 0.16));
+    lum = pow(clamp((lum - 0.06) * 2.2, 0.0, 1.0), 0.85);
+    float tube = smoothstep(0.74, 0.28, length((vUv - 0.5) * vec2(1.25, 1.0)));
+    float grain = hash21(floor(vUv * uRes * 0.6) + floor(uTime * 24.0)) * 0.1;
+    vec3 nvg = vec3(0.05, 0.9, 0.3) * (lum * 0.85 + grain) * tube;
+    nvg += vec3(0.0, 0.04, 0.015) * tube;
+    col = mix(col, nvg, uNvg);
+  }
 
   gl_FragColor = vec4(col, 1.0);
 }
@@ -232,6 +248,8 @@ export class InkRenderer {
   private _hurt = 0;
   private _flash = 0;
   night = 0;
+  /** 0..1, eased so the tubes fade up rather than snapping on */
+  nvg = 0;
   quality: Quality = "high";
   private lastW = 1;
   private lastH = 1;
@@ -277,6 +295,7 @@ export class InkRenderer {
         uFlash: { value: 0 },
         uLowHp: { value: 0 },
         uNight: { value: 0 },
+        uNvg: { value: 0 },
         uPaper: { value: new THREE.Vector3(0.965, 0.953, 0.902) },
         uInks: { value: INK_COLORS },
       },
@@ -327,6 +346,7 @@ export class InkRenderer {
     this.postMat.uniforms.uHurt.value = this._hurt;
     this.postMat.uniforms.uFlash.value = this._flash;
     this.postMat.uniforms.uNight.value = this.night;
+    this.postMat.uniforms.uNvg.value = this.nvg;
     this.postMat.uniforms.uNear.value = this.camera.near;
     this.postMat.uniforms.uFar.value = this.camera.far;
     this.renderer.setRenderTarget(this.rt);

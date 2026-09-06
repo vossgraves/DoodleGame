@@ -19,7 +19,7 @@ import type { GrappleTarget } from "./grapple";
 import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
-import { clamp } from "./math";
+import { clamp, damp } from "./math";
 
 export type GameState = "playing" | "paused" | "dead" | "intermission";
 
@@ -81,6 +81,9 @@ export interface HudSnap {
   skillCharge: number;
   skillActive: number;
   skillReady: boolean;
+  /** night map, and whether the goggles are down */
+  night: boolean;
+  goggles: boolean;
   /** minimap blips in world space; the UI rotates them into the player's frame */
   radar: { x: number; z: number; hostile: boolean }[];
   /** the map's footprint in world units, built once when the level loads */
@@ -137,6 +140,8 @@ const defaultHud = (): HudSnap => ({
   skillCharge: 0,
   skillActive: 0,
   skillReady: false,
+  night: false,
+  goggles: false,
   radar: [],
   radarWalls: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
@@ -285,6 +290,9 @@ export class Game {
 
   /** 0 means uncapped; otherwise the shortest gap between frames, in ms. */
   private frameMin = 0;
+  /** the map is dark, so the goggles are worth carrying */
+  night = false;
+  private gogglesOn = false;
 
   setFpsCap(fps: number) {
     this.frameMin = fps > 0 ? 1000 / fps : 0;
@@ -313,6 +321,7 @@ export class Game {
     gunsmith?: Gunsmith,
     wardrobe?: Wardrobe,
     skill?: string,
+    night = false,
   ) {
     this.canvas = canvas;
     this.mode = mode;
@@ -320,10 +329,11 @@ export class Game {
     const saved = localStorage.getItem("doodle_quality");
     const quality: Quality = isQuality(saved) ? saved : "high";
     this.R = new InkRenderer(canvas, quality);
-    this.R.night = mode === "zombies" ? 1 : 0;
+    this.night = night || mode === "zombies";
+    this.R.night = this.night ? 1 : 0;
     this.input = new Input(canvas);
     this.best = Number(localStorage.getItem(mode === "zombies" ? "doodle_zbest" : "doodle_best") || 0);
-    this.level = buildLevel(this.R.scene, this.world, mode, mapKey);
+    this.level = buildLevel(this.R.scene, this.world, mode, mapKey, this.night);
     this.combat = new Combat(this.world, this.R.scene, this.audio);
     const readInk = (key: string, fallback: number) => {
       const v = Number(localStorage.getItem(key));
@@ -706,6 +716,14 @@ export class Game {
       this.player.setSkillModel(this.skills.overridesWeapon ? this.skills.kind : "");
       // the skill key doubles as the grapple key: whichever this loadout runs
       if (!this.player.grappleEnabled && this.input.pressed("grapple")) this.skills.use();
+      if (this.night && this.input.pressed("goggles")) {
+        this.gogglesOn = !this.gogglesOn;
+        this.audio.ui();
+        this.tip(this.gogglesOn ? "goggles down" : "goggles up");
+      }
+      this.R.nvg = damp(this.R.nvg, this.gogglesOn ? 1 : 0, 9, dt);
+      this.hud.goggles = this.gogglesOn;
+      this.hud.night = this.night;
       this.player.frozen = this.streaks.piloting;
       const view = this.streaks.cameraView();
       if (view) {

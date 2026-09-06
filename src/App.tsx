@@ -137,6 +137,8 @@ const emptyHud = (): HudSnap => ({
   skillCharge: 0,
   skillActive: 0,
   skillReady: false,
+  night: false,
+  goggles: false,
 });
 
 function isTouchDevice() {
@@ -198,6 +200,7 @@ export default function App() {
     return isQuality(s) ? s : "high";
   });
   const [fpsCap, setFpsCap] = useState(() => Number(localStorage.getItem("doodle_fps") || 0));
+  const [night, setNight] = useState(() => localStorage.getItem("doodle_night") === "1");
   const [playerUid, setPlayerUid] = useState(() => account.uid());
   const [bestD, setBestD] = useState(Number(localStorage.getItem("doodle_best") || 0));
   const [bestZ, setBestZ] = useState(Number(localStorage.getItem("doodle_zbest") || 0));
@@ -214,6 +217,8 @@ export default function App() {
   wardrobeRef.current = wardrobe;
   const skillRef = useRef(skill);
   skillRef.current = skill;
+  const nightRef = useRef(night);
+  nightRef.current = night;
   const killsRef = useRef(weaponKills);
   killsRef.current = weaponKills;
 
@@ -320,7 +325,16 @@ export default function App() {
     if (screen !== "game") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas, mode, mapKey, loadoutRef.current, gunsmithRef.current, wardrobeRef.current, skillRef.current);
+    const g = new Game(
+      canvas,
+      mode,
+      mapKey,
+      loadoutRef.current,
+      gunsmithRef.current,
+      wardrobeRef.current,
+      skillRef.current,
+      nightRef.current,
+    );
     g.setFpsCap(Number(localStorage.getItem("doodle_fps") || 0));
     g.onWeaponKill = (k) => {
       setWeaponKills((prev) => {
@@ -401,6 +415,11 @@ export default function App() {
           }}
           matchMode={matchMode}
           onMatchMode={setMatchMode}
+          night={night}
+          onNight={(v) => {
+            setNight(v);
+            localStorage.setItem("doodle_night", v ? "1" : "0");
+          }}
           bestD={bestD}
           bestZ={bestZ}
           onSolo={(m) => launch(m)}
@@ -682,6 +701,8 @@ function ModePicker({
   onMap,
   matchMode,
   onMatchMode,
+  night,
+  onNight,
   bestD,
   bestZ,
   onSolo,
@@ -692,6 +713,8 @@ function ModePicker({
   onMap: (k: string) => void;
   matchMode: MatchMode;
   onMatchMode: (m: MatchMode) => void;
+  night: boolean;
+  onNight: (v: boolean) => void;
   bestD: number;
   bestZ: number;
   onSolo: (m: Mode) => void;
@@ -759,6 +782,19 @@ function ModePicker({
                 <div className="text-sm leading-tight opacity-70">{m.blurb}</div>
               </button>
             ))}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+            {(
+              [
+                [false, "daylight"],
+                [true, "after dark"],
+              ] as [boolean, string][]
+            ).map(([v, label]) => (
+              <button key={label} className={`gun-chip ${night === v ? "on" : ""}`} onClick={() => onNight(v)}>
+                {label}
+              </button>
+            ))}
+            {night && <span className="text-base opacity-60">bring the goggles · N</span>}
           </div>
         </div>
 
@@ -2306,6 +2342,17 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
               }}
             />
           </div>
+        </div>
+      )}
+
+      {hud.night && (
+        <div className={`nvg-pip hud-bit ${hud.goggles ? "on" : ""}`}>
+          <svg viewBox="0 0 30 20" width="30" height="20" aria-hidden="true">
+            <circle cx="9" cy="10" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
+            <circle cx="21" cy="10" r="6.5" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d="M15 8v4" stroke="currentColor" strokeWidth="2" />
+          </svg>
+          <em>N</em>
         </div>
       )}
 
