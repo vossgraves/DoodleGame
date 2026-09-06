@@ -3,7 +3,8 @@ import { InkRenderer } from "./renderer";
 import { World } from "./physics";
 import { Input } from "./input";
 import { AudioSys } from "./audio";
-import { buildLevel, disposeLevel, DEFAULT_MAP, type Level, type Mode } from "./level";
+import { buildLevel, disposeLevel, getMap, DEFAULT_MAP, type Level, type Mode } from "./level";
+import { ZoneView } from "./zone";
 import { Player, type Weapon, type WeaponKind } from "./player";
 import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
@@ -124,6 +125,7 @@ export class Game {
   /** fires when the lobby roster, scores or match state change */
   onNet: (() => void) | null = null;
   match!: MatchNet;
+  zoneView!: ZoneView;
   private raf = 0;
   private last = 0;
   private msgT = 0;
@@ -187,12 +189,19 @@ export class Game {
       spawnPoints: () => this.level.spawns,
       localPos: () => this.player.pos,
       localAlive: () => this.player.alive,
+      mapExtent: () => getMap(this.mapKey).half,
+      spawnLoot: (items) => {
+        for (const it of items) {
+          this.combat.spawnPickup(it.kind, new THREE.Vector3(it.pos[0], it.pos[1], it.pos[2]));
+        }
+      },
       feed: (text, pts) => this.addScore(pts, text),
       announce: (m, s) => this.announce(m, s),
       changed: () => this.onNet?.(),
     });
     // a hit on another player is reported to them; their client applies it
     this.combat.onRemoteHit = (t, dmg, crit) => this.match.reportHit(t.id, dmg, this.player.eye, crit);
+    this.zoneView = new ZoneView(this.R.scene);
     this.audio.setTune(mode === "zombies" ? "zombies" : "district");
     const sens = Number(localStorage.getItem("doodle_sens") || 100);
     const invert = localStorage.getItem("doodle_invert") === "1";
@@ -392,6 +401,12 @@ export class Game {
       if (this.match.online) {
         this.match.update(dt);
         this.combat.remotes = this.match.targets();
+        const z = this.match.zone;
+        if (z.active && this.match.mode === "br") {
+          this.zoneView.set(z.cx, z.cz, z.r);
+          const burn = this.match.zoneTick(dt, this.player.pos);
+          if (burn > 0 && this.player.alive) this.player.takeDamage(burn, null);
+        } else this.zoneView.hide();
       } else if (this.combat.remotes.length) {
         this.combat.remotes = [];
       }
@@ -489,6 +504,7 @@ export class Game {
     this.audio.stopMusic();
     this.combat.clear();
     this.match.leave();
+    this.zoneView.dispose(this.R.scene);
     disposeLevel(this.R.scene, this.level);
     this.R.dispose();
   }

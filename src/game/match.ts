@@ -11,11 +11,40 @@ import * as THREE from "three";
 import { Net, type PeerMeta } from "./net";
 import { RemotePlayer, TEAM_INKS, FFA_INK, type Snapshot } from "./remote";
 
-export type MatchMode = "ffa" | "tdm";
+export type MatchMode = "ffa" | "tdm" | "br";
 export type MatchState = "offline" | "lobby" | "playing" | "over";
 
-export const SCORE_TARGET: Record<MatchMode, number> = { ffa: 25, tdm: 50 };
+/** kills to win; battle royale is last-one-standing instead */
+export const SCORE_TARGET: Record<MatchMode, number> = { ffa: 25, tdm: 50, br: 0 };
 export const RESPAWN_DELAY = 3.0;
+
+/** how long you get before each closure, and what fraction of the map is left after */
+const ZONE_PHASES = [
+  { wait: 30, factor: 0.7 },
+  { wait: 26, factor: 0.52 },
+  { wait: 22, factor: 0.36 },
+  { wait: 20, factor: 0.22 },
+  { wait: 18, factor: 0.1 },
+];
+const ZONE_CLOSE_SPEED = 2.6;
+const ZONE_DPS = [3, 5, 8, 12, 18, 25];
+const ZONE_TICK = 0.6;
+
+export type LootKind = "ammo" | "hp" | "nade";
+export interface LootItem {
+  kind: LootKind;
+  pos: [number, number, number];
+}
+
+export interface ZoneState {
+  cx: number;
+  cz: number;
+  r: number;
+  target: number;
+  phase: number;
+  wait: number;
+  active: boolean;
+}
 /** 20 snapshots a second is plenty for figures this size */
 const SNAPSHOT_HZ = 20;
 const DROP_AFTER = 12;
@@ -26,6 +55,8 @@ export interface RosterRow {
   team: number;
   kills: number;
   deaths: number;
+  /** battle royale only: eliminated, no respawn coming */
+  out?: boolean;
 }
 
 export interface MatchHooks {
@@ -39,6 +70,9 @@ export interface MatchHooks {
   spawnPoints: () => THREE.Vector3[];
   localPos: () => THREE.Vector3;
   localAlive: () => boolean;
+  /** half-extent of the current map, used to size the opening zone */
+  mapExtent: () => number;
+  spawnLoot: (items: LootItem[]) => void;
   feed: (text: string, pts: number) => void;
   announce: (main: string, sub?: string) => void;
   /** roster/score/state changed — refresh any UI */
@@ -57,10 +91,15 @@ export class MatchNet {
   status = "";
   winner: string | null = null;
 
+  zone: ZoneState = { cx: 0, cz: 0, r: 0, target: 0, phase: 0, wait: 0, active: false };
+
   private sendT = 0;
   private firing = false;
   private deadT = 0;
   private pendingRespawn = false;
+  private zoneR0 = 0;
+  private zoneSendT = 0;
+  private zoneHurtT = 0;
 
   constructor(hooks: MatchHooks) {
     this.hooks = hooks;
@@ -149,13 +188,34 @@ export class MatchNet {
     for (const r of this.roster.values()) {
       r.kills = 0;
       r.deaths = 0;
+      r.out = false;
     }
     const spawns = this.shuffledSpawnIndices();
     const assign: Record<string, number> = {};
     let i = 0;
     for (const id of this.roster.keys()) assign[id] = spawns[i++ % spawns.length];
-    this.net.send("start", { map: this.mapKey, mode: this.mode, spawns: assign, roster: this.rosterRows() });
-    this.beginMatch(assign[this.net.id!] ?? 0);
+    const loot = this.mode === "br" ? this.makeLoot() : [];
+    this.net.send("start", { map: this.mapKey, mode: this.mode, spawns: assign, roster: this.rosterRows(), loot });
+    this.beginMatch(assign[this.net.id!] ?? 0, loot);
+  }
+
+  /** Scatter supplies around every spawn so a drop-in has something to find. */
+  private makeLoot(): LootItem[] {
+    const kinds: LootKind[] = ["ammo", "ammo", "hp", "nade"];
+    const out: LootItem[] = [];
+    for (const p of this.hooks.spawnPoints()) {
+      for (let i = 0; i < 2; i++) {
+        out.push({
+          kind: kinds[Math.floor(Math.random() * kinds.length)],
+          pos: [
+            +(p.x + (Math.random() - 0.5) * 7).toFixed(1),
+            +p.y.toFixed(1),
+            +(p.z + (Math.random() - 0.5) * 7).toFixed(1),
+          ],
+        });
+      }
+    }
+    return out;
   }
 
   private shuffledSpawnIndices() {
@@ -178,7 +238,7 @@ export class MatchNet {
     for (const r of this.roster.values()) r.team = t++ % 2;
   }
 
-  private beginMatch(spawnIndex: number) {
+  private beginMatch(spawnIndex: number, loot: LootItem[] = []) {
     this.state = "playing";
     this.winner = null;
     this.deadT = 0;
@@ -186,8 +246,51 @@ export class MatchNet {
     const pts = this.hooks.spawnPoints();
     if (pts.length) this.hooks.respawn(pts[spawnIndex % pts.length].clone());
     this.applyTeamInks();
-    this.hooks.announce(this.mode === "tdm" ? "TEAM DEATHMATCH" : "DEATHMATCH", `first to ${SCORE_TARGET[this.mode]}`);
+
+    if (this.mode === "br") {
+      this.zoneR0 = this.hooks.mapExtent() * 1.35;
+      this.zone = {
+        cx: 0,
+        cz: 0,
+        r: this.zoneR0,
+        target: this.zoneR0,
+        phase: 0,
+        wait: ZONE_PHASES[0].wait,
+        active: true,
+      };
+      this.zoneSendT = 0;
+      this.zoneHurtT = ZONE_TICK;
+      if (loot.length) this.hooks.spawnLoot(loot);
+      this.hooks.announce("BATTLE ROYALE", "last doodle on the page wins");
+    } else {
+      this.zone.active = false;
+      this.hooks.announce(this.mode === "tdm" ? "TEAM DEATHMATCH" : "DEATHMATCH", `first to ${SCORE_TARGET[this.mode]}`);
+    }
     this.hooks.changed();
+  }
+
+  /** How many are still in it (battle royale). */
+  aliveCount() {
+    let n = 0;
+    for (const r of this.roster.values()) if (!r.out) n++;
+    return n;
+  }
+
+  /**
+   * Damage owed for standing outside the zone, batched onto a tick so the hurt
+   * effects do not fire every frame. Returns 0 when safe.
+   */
+  zoneTick(dt: number, pos: THREE.Vector3) {
+    if (this.mode !== "br" || !this.inMatch || !this.zone.active) return 0;
+    const outside = Math.hypot(pos.x - this.zone.cx, pos.z - this.zone.cz) > this.zone.r;
+    if (!outside) {
+      this.zoneHurtT = ZONE_TICK;
+      return 0;
+    }
+    this.zoneHurtT -= dt;
+    if (this.zoneHurtT > 0) return 0;
+    this.zoneHurtT = ZONE_TICK;
+    return ZONE_DPS[Math.min(this.zone.phase, ZONE_DPS.length - 1)] * ZONE_TICK;
   }
 
   private applyTeamInks() {
@@ -317,7 +420,13 @@ export class MatchNet {
       this.hooks.changed();
     });
 
-    net.on<{ map: string; mode: MatchMode; spawns: Record<string, number>; roster: RosterRow[] }>("start", (d) => {
+    net.on<{
+      map: string;
+      mode: MatchMode;
+      spawns: Record<string, number>;
+      roster: RosterRow[];
+      loot?: LootItem[];
+    }>("start", (d) => {
       if (net.isHost) return;
       this.mapKey = d.map || this.mapKey;
       this.mode = d.mode || this.mode;
@@ -325,7 +434,13 @@ export class MatchNet {
         this.roster.clear();
         for (const p of d.roster) this.roster.set(p.id, { ...p });
       }
-      this.beginMatch(d.spawns?.[net.id!] ?? 0);
+      this.beginMatch(d.spawns?.[net.id!] ?? 0, d.loot || []);
+    });
+
+    // the host owns the zone; everyone else just draws where it says
+    net.on<ZoneState>("zone", (d) => {
+      if (net.isHost || !d) return;
+      this.zone = { ...d };
     });
 
     // a player snapshot, relayed to everyone
@@ -361,6 +476,7 @@ export class MatchNet {
       }
       const r = this.remotes.get(from);
       if (r) r.alive = false;
+      if (this.mode === "br" && victim) victim.out = true;
       if (net.isHost) {
         this.sendScores();
         this.checkWin();
@@ -403,6 +519,17 @@ export class MatchNet {
 
   private checkWin() {
     if (!this.net.isHost || this.state !== "playing") return;
+    if (this.mode === "br") {
+      // a lobby of one is a practice run, not a won match
+      if (this.roster.size < 2) return;
+      const standing = [...this.roster.values()].filter((r) => !r.out);
+      if (standing.length <= 1) {
+        const w = standing[0] || null;
+        this.net.send("end", { id: w?.id ?? null });
+        this.endMatch({ id: w?.id ?? null });
+      }
+      return;
+    }
     const target = SCORE_TARGET[this.mode];
     if (this.mode === "tdm") {
       const [a, b] = this.teamScores();
@@ -482,7 +609,15 @@ export class MatchNet {
     }
     this.lastHitBy = null;
     this.deadT = 0;
-    this.pendingRespawn = true;
+    // battle royale has no second chances
+    if (this.mode === "br") {
+      if (me) me.out = true;
+      this.pendingRespawn = false;
+      this.hooks.announce("ERASED", "you are out");
+      if (this.net.isHost) this.checkWin();
+    } else {
+      this.pendingRespawn = true;
+    }
     this.hooks.changed();
   }
 
@@ -500,6 +635,24 @@ export class MatchNet {
     }
 
     if (this.state !== "playing") return;
+
+    // the host drives the zone and tells everyone else where it is
+    if (this.mode === "br" && this.zone.active && this.net.isHost) {
+      const z = this.zone;
+      z.wait -= dt;
+      if (z.wait <= 0 && z.phase < ZONE_PHASES.length) {
+        z.target = this.zoneR0 * ZONE_PHASES[z.phase].factor;
+        z.phase += 1;
+        z.wait = ZONE_PHASES[Math.min(z.phase, ZONE_PHASES.length - 1)].wait;
+        this.hooks.announce("THE PAGE CURLS IN", "get inside the ink");
+      }
+      if (z.r > z.target) z.r = Math.max(z.target, z.r - ZONE_CLOSE_SPEED * dt);
+      this.zoneSendT -= dt;
+      if (this.zoneSendT <= 0) {
+        this.zoneSendT = 0.5;
+        this.net.send("zone", { ...z });
+      }
+    }
 
     // respawn the local player after a beat, as far from everyone else as we can
     if (this.pendingRespawn) {

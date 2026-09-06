@@ -514,7 +514,12 @@ function Online({
     const [blue, red] = m.teamScores();
     return (
       <div className="net-score hud-bit">
-        {m.mode === "tdm" ? (
+        {m.mode === "br" ? (
+          <div className="justify-center text-2xl">
+            <b>{m.aliveCount()}</b>
+            <span className="text-base opacity-60">still on the page</span>
+          </div>
+        ) : m.mode === "tdm" ? (
           <div className="flex items-center justify-center gap-3 text-2xl">
             <b style={{ color: "var(--ink)" }}>{blue}</b>
             <span className="text-base opacity-60">to {target}</span>
@@ -578,7 +583,8 @@ function Online({
             code <b className="tracking-[0.25em] text-[var(--red)]">{m.code}</b>
           </p>
           <p className="text-lg opacity-70">
-            {m.mode === "tdm" ? "team deathmatch" : "free-for-all"} · {MAPS.find((x) => x.key === m.mapKey)?.name}
+            {m.mode === "tdm" ? "team deathmatch" : m.mode === "br" ? "battle royale" : "free-for-all"} ·{" "}
+            {MAPS.find((x) => x.key === m.mapKey)?.name}
           </p>
 
           <div className="mt-5 text-left text-xl">
@@ -633,8 +639,8 @@ function Online({
           />
         </label>
 
-        <div className="mt-4 flex items-center justify-center gap-2">
-          {(["ffa", "tdm"] as MatchMode[]).map((k) => (
+        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+          {(["ffa", "tdm", "br"] as MatchMode[]).map((k) => (
             <button
               key={k}
               className={`gun-chip ${matchMode === k ? "on" : ""}`}
@@ -643,7 +649,7 @@ function Online({
                 m.mode = k;
               }}
             >
-              {k === "ffa" ? "FREE-FOR-ALL" : "TEAM DEATHMATCH"}
+              {k === "ffa" ? "FREE-FOR-ALL" : k === "tdm" ? "TEAM DEATHMATCH" : "BATTLE ROYALE"}
             </button>
           ))}
         </div>
