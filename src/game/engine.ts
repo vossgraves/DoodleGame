@@ -14,6 +14,7 @@ const RESPAWN_SWAP = 5;
 import { Player, WEAPONS, type Weapon, type WeaponKind } from "./player";
 import type { Gunsmith } from "./attachments";
 import type { Wardrobe } from "./cosmetics";
+import type { GrappleTarget } from "./grapple";
 import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
@@ -70,6 +71,10 @@ export interface HudSnap {
   streak: number;
   uav: boolean;
   piloting: boolean;
+  /** grapple: breath left, whether you are hanging, and whether it has a bite */
+  grappleStam: number;
+  grappleOn: boolean;
+  grappleAim: boolean;
   /** minimap blips in world space; the UI rotates them into the player's frame */
   radar: { x: number; z: number; hostile: boolean }[];
   radarSelf: { x: number; z: number; yaw: number };
@@ -117,6 +122,9 @@ const defaultHud = (): HudSnap => ({
   streak: 0,
   uav: false,
   piloting: false,
+  grappleStam: 1,
+  grappleOn: false,
+  grappleAim: false,
   radar: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
   radarHalf: 40,
@@ -167,6 +175,34 @@ export class Game {
     if (this.swapWindow <= 0 || this.player.spentResource || !this.player.alive) return false;
     this.player.setLoadout(kinds, gunsmith, wardrobe);
     return true;
+  }
+
+  /**
+   * What the grapple may hook. Anything you could shoot is fair game — hooking
+   * a body yanks it to you instead of pulling you to it.
+   */
+  private grappleTargets(): GrappleTarget[] {
+    const out: GrappleTarget[] = [];
+    for (const e of this.combat.enemies) {
+      if (!e.alive) continue;
+      out.push({
+        center: e.center,
+        alive: e.alive,
+        yank: (toward) => {
+          const to = new THREE.Vector3().subVectors(toward, e.pos);
+          to.y = 0;
+          const d = to.length() || 1;
+          e.vel.addScaledVector(to.divideScalar(d), Math.min(26, d * 3));
+          e.vel.y = Math.max(e.vel.y, 5);
+          this.addScore(30, "YANKED");
+        },
+      });
+    }
+    for (const r of this.match.remotes.values()) {
+      if (!r.alive) continue;
+      out.push({ center: r.center, alive: r.alive });
+    }
+    return out;
   }
 
   /** Everything the local player may hurt, for streaks to pick from. */
@@ -253,6 +289,8 @@ export class Game {
       onFire: (w, o, d, ads) => this.handleFire(w, o, d, ads),
       onSlash: (o, d, dmg, heavy) => this.handleSlash(o, d, dmg, heavy),
       onDeflect: (o, d, dmg) => this.handleDeflect(o, d, dmg),
+      grappleTargets: () => this.grappleTargets(),
+      tip: (t) => this.tip(t),
       onNade: (o, d, c) => this.combat.throwNade(o, d, c),
       onHurt: (_a, from) => this.handleHurt(from),
       onDeath: () => this.handleDeath(),
@@ -687,6 +725,9 @@ export class Game {
     this.hud.streak = this.streaks.streak;
     this.hud.uav = this.streaks.uavActive;
     this.hud.piloting = this.streaks.piloting;
+    this.hud.grappleStam = this.player.grapple.stamina;
+    this.hud.grappleOn = this.player.grapple.attached;
+    this.hud.grappleAim = this.player.grapple.hasTarget;
     // spending anything — a bullet, a grenade, a swing — closes the window
     this.hud.canSwap =
       this.match.inMatch && this.player.alive && this.swapWindow > 0 && !this.player.spentResource;
@@ -719,6 +760,7 @@ export class Game {
     this.combat.clear();
     this.match.leave();
     this.streaks.dispose();
+    this.player.grapple.dispose();
     this.zoneView.dispose(this.R.scene);
     disposeLevel(this.R.scene, this.level);
     this.R.dispose();

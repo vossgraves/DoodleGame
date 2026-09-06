@@ -126,6 +126,9 @@ const emptyHud = (): HudSnap => ({
   radar: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
   radarHalf: 40,
+  grappleStam: 1,
+  grappleOn: false,
+  grappleAim: false,
 });
 
 function isTouchDevice() {
@@ -731,7 +734,7 @@ function HowTo({ onBack, touch }: { onBack: () => void; touch: boolean }) {
               </p>
             ) : (
               <p>
-                <b>click</b> fire · <b>right mouse</b> aim · <b>R</b> reload · <b>1–4</b> weapons · <b>G</b> grenade · <b>X</b> dash
+                <b>click</b> fire · <b>right mouse</b> aim · <b>R</b> reload · <b>1–4</b> weapons · <b>G</b> grenade · <b>Q</b> grapple · <b>X</b> dash
               </p>
             )}
           </div>
@@ -1937,6 +1940,13 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
         </div>
       </div>
 
+      <div className={`grapple-meter hud-bit ${hud.grappleOn ? "on" : ""} ${hud.grappleAim ? "aimed" : ""}`}>
+        <div className="text-[10px] tracking-widest">ROPE</div>
+        <div className="fm-tube">
+          <div className="fm-fill" style={{ height: `${hud.grappleStam * 100}%` }} />
+        </div>
+      </div>
+
       <div className="absolute left-0 right-0 top-[22%] pointer-events-none">
         {hud.message && <div className="msg-main show">{hud.message}</div>}
         {hud.sub && <div className="msg-sub">{hud.sub}</div>}
@@ -2064,6 +2074,13 @@ const ICONS: Record<string, React.ReactNode> = {
     <>
       <path d="M2.5 8.5h15.5v3.2h-3.4l-2.1 4.4H9.2l1.5-4.4H2.5z" />
       <line x1="6" y1="11.7" x2="6" y2="14" />
+    </>
+  ),
+  grapple: (
+    <>
+      {/* a hook on a line */}
+      <path d="M4 4l9 9" />
+      <path d="M17 11a4 4 0 1 1-4 4V9" />
     </>
   ),
   pause: (
@@ -2257,6 +2274,9 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
       </button>
       <button className={`tbtn nade ${held.grenade ? "held" : ""}`} aria-label="grenade" {...hold("grenade")}>
         <Icon name="nade" />
+      </button>
+      <button className={`tbtn grapple ${held.grapple ? "held" : ""}`} aria-label="grapple" {...hold("grapple")}>
+        <Icon name="grapple" />
       </button>
       <button className="tbtn wep" aria-label="switch weapon" {...tap(() => gameRef.current?.player.nextWeapon(1))}>
         <Icon name="wep" />

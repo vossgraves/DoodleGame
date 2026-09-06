@@ -209,6 +209,18 @@ export class AudioSys {
     this.noiseBurst(0.16, 700, 0.6, 0.13, "lowpass");
     this.beep(180, 0.14, "sawtooth", 0.05, 1.5);
   }
+  /** The hook leaving the hand. */
+  grappleFire() {
+    this.ensure();
+    this.noiseBurst(0.08, 2600, 1.6, 0.1, "highpass");
+    this.beep(520, 0.09, "square", 0.05, 0.5);
+  }
+  /** It bit into something. */
+  grappleHit() {
+    this.ensure();
+    this.noiseBurst(0.09, 500, 1.2, 0.16, "lowpass");
+    this.beep(240, 0.1, "square", 0.08, 1.5);
+  }
   dash() {
     this.ensure();
     this.noiseBurst(0.1, 600, 1, 0.1, "highpass");

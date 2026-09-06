@@ -27,7 +27,8 @@ const KEYMAP: Record<string, string> = {
   KeyX: "dash",
   AltLeft: "dash",
   KeyM: "music",
-  KeyQ: "nextWeapon",
+  KeyQ: "grapple",
+  KeyE: "nextWeapon",
   Tab: "score",
 };
 const MOUSEMAP: Record<number, string> = { 0: "fire", 2: "aim", 1: "melee" };
@@ -45,6 +46,7 @@ const PADMAP: Record<number, string> = {
   11: "grenade",
   14: "prevWeapon",
   15: "nextWeapon",
+  8: "grapple",
 };
 
 export class Input {

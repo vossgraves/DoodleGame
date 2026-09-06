@@ -6,6 +6,7 @@ import type { Input } from "./input";
 import type { AudioSys } from "./audio";
 import { applyBuild, type GunBuild, type Gunsmith } from "./attachments";
 import { camoById, charmById, stickerById, type Wardrobe, type WeaponSkin } from "./cosmetics";
+import { Grapple, type GrappleTarget } from "./grapple";
 
 export type WeaponKind =
   | "rifle"
@@ -987,6 +988,10 @@ export interface PlayerHooks {
   onSlash: (origin: THREE.Vector3, dir: THREE.Vector3, dmg: number, heavy: boolean) => void;
   /** a shot turned away by a clean parry, sent back where it came from */
   onDeflect: (origin: THREE.Vector3, dir: THREE.Vector3, dmg: number) => void;
+  /** things the grapple may hook and yank */
+  grappleTargets?: () => GrappleTarget[];
+  /** short line of advice for the HUD */
+  tip?: (s: string) => void;
   onNade: (origin: THREE.Vector3, dir: THREE.Vector3, charge: number) => void;
   onHurt: (amount: number, from: THREE.Vector3 | null) => void;
   onDeath: () => void;
@@ -1065,6 +1070,7 @@ export class Player {
   private landGraceT = 0;
   /** metres walked since the last footstep */
   private stepDist = 0;
+  grapple!: Grapple;
   dashCd = 0;
   airJumps = 1;
   sprinting = false;
@@ -1102,9 +1108,31 @@ export class Player {
     hooks.camera.add(this.rig);
     for (const w of this.weapons) this.rig.add(w.root);
     hooks.scene.add(hooks.camera);
+    this.grapple = new Grapple({
+      world: hooks.world,
+      scene: hooks.scene,
+      audio: hooks.audio,
+      input: hooks.input,
+      eye: () => this.eye,
+      center: () => this.center,
+      right: () => this.right,
+      forward: () => this.forward,
+      pos: () => this.pos,
+      vel: () => this.vel,
+      height: () => this.height,
+      onGround: () => this.onGround,
+      leaveGround: () => {
+        this.onGround = false;
+      },
+      moveY: () => this.hooks.input.move.y,
+      targets: () => this.hooks.grappleTargets?.() ?? [],
+      kickFov: (v) => this.fovKick.kick(v),
+      tip: (s) => this.hooks.tip?.(s),
+    });
   }
 
   reset(p: THREE.Vector3) {
+    this.grapple.reset();
     this.pos.copy(p);
     this.vel.set(0, 0, 0);
     this.hp = this.maxHp;
@@ -1372,7 +1400,7 @@ export class Player {
     }
     if (this.sliding) {
       this.slideT += dt;
-      if (!crouchDown || hspeed < 3.5 || this.airT > 0.35) this.sliding = false;
+      if (!crouchDown || hspeed < 3.5 || this.airT > 0.35 || this.grapple.attached) this.sliding = false;
     }
     this.sprinting = i.down("sprint") && !this.aiming && !crouchDown && i.move.y > 0.3;
     this.crouching = (crouchDown && this.onGround) || this.sliding;
@@ -1394,7 +1422,10 @@ export class Player {
     const wish = this.wishDir();
     const wishLen = Math.hypot(wish.x, wish.z);
     if (this.jumpBuf > 0) {
-      if (this.onGround || this.coyote > 0) {
+      if (this.grapple.attached) {
+        this.jumpBuf = 0;
+        this.grapple.detach(true);
+      } else if (this.onGround || this.coyote > 0) {
         this.jumpBuf = 0;
         this.coyote = 0;
         this.vel.y = JUMP;
@@ -1451,8 +1482,12 @@ export class Player {
       this.fovKick.kick(80);
     }
     this.dashCd = Math.max(0, this.dashCd - dt);
+    // the rope pulls and constrains before the body is integrated
+    this.grapple.update(dt);
     // hauling yourself onto a ledge you ran into, rather than bouncing off it
-    if (!this.onGround && this.mantleCd <= 0 && i.move.y > 0.3 && this.vel.y < 8) this.tryMantle();
+    if (!this.onGround && this.mantleCd <= 0 && i.move.y > 0.3 && this.vel.y < 8 && !this.grapple.attached) {
+      this.tryMantle();
+    }
 
     const base = this.crouching && !this.sliding ? CROUCH : this.sprinting ? SPRINT : WALK;
     // what you are carrying sets the pace — an LMG is not an SMG
@@ -1506,7 +1541,8 @@ export class Player {
     }
 
     const fallVel = this.vel.y;
-    const col = this.hooks.world.moveAABB(this.pos, this.vel, 0.34, this.height, dt, G);
+    // hanging on the rope takes a little of the weight off
+    const col = this.hooks.world.moveAABB(this.pos, this.vel, 0.34, this.height, dt, G * (this.grapple.attached ? 0.88 : 1));
     this.hitWall = col.hitWall;
     if (col.wallNormal) this.wallN = col.wallNormal;
     if (col.onGround && !this.lastGround) {
@@ -1540,7 +1576,9 @@ export class Player {
     }
 
     this.lastDamageT += dt;
-    if (this.lastDamageT > 4.2 && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 12 * dt);
+    if (this.lastDamageT > 4.2 && this.hp < this.maxHp && !this.sprinting && this.grapple.state === "idle") {
+      this.hp = Math.min(this.maxHp, this.hp + 12 * dt);
+    }
     this.hurtFx = Math.max(0, this.hurtFx - dt * 1.4);
     this.flashFx = Math.max(0, this.flashFx - dt * 3);
     this.shake = Math.max(0, this.shake - dt * 2.5);

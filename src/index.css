@@ -1235,3 +1235,43 @@ input[type="range"].ink-range::-webkit-slider-thumb {
 .att-chip.locked:hover {
   background: rgba(246, 243, 230, 0.6);
 }
+
+/* ---- grapple ----------------------------------------------------------- */
+.grapple-meter {
+  position: absolute;
+  right: 7%;
+  bottom: 46%;
+  width: 18px;
+  opacity: 0.5;
+}
+/* it only asks for attention when the rope is out or the hook has a bite */
+.grapple-meter.on,
+.grapple-meter.aimed {
+  opacity: 1;
+}
+.grapple-meter .fm-tube {
+  height: 64px;
+}
+.grapple-meter .fm-fill {
+  background: repeating-linear-gradient(-55deg, var(--ink) 0 2px, transparent 2px 5px);
+}
+.grapple-meter.aimed .fm-tube {
+  border-color: var(--green);
+}
+.grapple-meter.on .fm-fill {
+  background: repeating-linear-gradient(-55deg, var(--green) 0 2px, transparent 2px 5px);
+}
+.hud-root.touch .grapple-meter {
+  left: 34px;
+  right: auto;
+  bottom: 46%;
+}
+
+.tbtn.grapple {
+  width: 50px;
+  height: 50px;
+  right: calc(178px + env(safe-area-inset-right));
+  bottom: calc(178px + env(safe-area-inset-bottom));
+  border-color: var(--green);
+  color: var(--green);
+}
