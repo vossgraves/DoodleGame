@@ -1703,7 +1703,6 @@ export class Player {
     this.flashFx = Math.max(0, this.flashFx - dt * 3);
     this.shake = Math.max(0, this.shake - dt * 2.5);
 
-    // combat
     this.weapon.update(dt);
     if (i.pressed("reload")) {
       if (this.weapon.beginReload()) this.hooks.audio.reload();

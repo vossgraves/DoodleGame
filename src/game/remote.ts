@@ -1,14 +1,7 @@
-// Other people in the match.
-//
-// Each remote player is drawn as a doodle figure in a team colour and eased
-// between the snapshots its owner sends (~20/s). It also exposes the same
-// head/centre spheres the hitscan uses for enemies, so shooting a person and
-// shooting a bot go down the same path.
-//
-// Damage is owner-authoritative: when you hit someone you tell *them*, and their
-// client applies it. Nobody can kill you on your own screen without your client
-// agreeing, and it keeps hit detection on the machine with the lowest latency to
-// the shot — the shooter's.
+// Other people in the match: a doodle figure in a team colour, eased between the
+// snapshots its owner sends (~20/s). It exposes the same head and centre spheres
+// the hitscan uses for enemies, so shooting a person and shooting a bot go down
+// one path. Authority is split in match.ts.
 
 import * as THREE from "three";
 import { humanoid, TYPES, type BodyParts, type TypeDef } from "./enemies";

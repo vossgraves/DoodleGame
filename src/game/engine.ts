@@ -562,7 +562,8 @@ export class Game {
       this.player.weapon.bloody(r.kill ? 0.34 : 0.12);
     }
     if (r.kill) {
-      // score already? slash doesn't call onKill per enemy. Let's award roughly
+      // a slash can take several at once, so it scores as one swing rather than
+      // going through onKill per body
       this.addScore(heavy ? 200 : 120, heavy ? "FOCUS SLASH" : "SLASH");
       this.kills += 1;
     }
@@ -736,8 +737,6 @@ export class Game {
         this.intermission -= dt;
         if (this.intermission <= 0) this.beginWave();
       }
-    } else if (this.state === "paused" || this.state === "dead") {
-      // still render
     }
 
     if (this.msgT > 0) {

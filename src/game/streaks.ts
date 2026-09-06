@@ -1,9 +1,6 @@
-// Scorestreaks: rewards for a run of kills without dying.
-//
-// Each one is deliberately simple mechanically but distinct to use — a reveal,
-// an autonomous helper, a thing you pilot, and a swarm you point at trouble.
-// Damage is routed back through the caller so PvE bots and PvP players take it
-// down the same path the guns already use.
+// Scorestreaks: rewards for a run of kills without dying. Damage routes back
+// through the caller, so PvE enemies and PvP players take it down the same path
+// the guns already use.
 
 import * as THREE from "three";
 import { World } from "./physics";
