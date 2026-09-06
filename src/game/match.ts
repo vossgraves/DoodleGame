@@ -92,6 +92,8 @@ export interface MatchHooks {
   announce: (main: string, sub?: string) => void;
   /** roster/score/state changed — refresh any UI */
   changed: () => void;
+  /** we got the kill; feeds the scorestreak counter */
+  localKill: () => void;
 }
 
 export class MatchNet {
@@ -400,7 +402,10 @@ export class MatchNet {
     const at: [number, number, number] = [+bot.pos.x.toFixed(1), +bot.pos.y.toFixed(1), +bot.pos.z.toFixed(1)];
     this.net.send("pdead", { killer: by, who: botId, at, gun: bot.dropWeapon, drops });
     this.hooks.dropAt(at, bot.dropWeapon, drops);
-    if (by === this.net.id) this.hooks.feed(`ERASED ${bot.name}`, 100);
+    if (by === this.net.id) {
+      this.hooks.feed(`ERASED ${bot.name}`, 100);
+      this.hooks.localKill();
+    }
     else if (killer && row) this.hooks.feed(`${killer.name} erased ${row.name}`, 0);
     const rp = this.remotes.get(botId);
     if (rp) rp.alive = false;
@@ -691,6 +696,7 @@ export class MatchNet {
         const vn = victim.name;
         if (d.killer === net.id) {
           this.hooks.feed(`ERASED ${vn}`, 100);
+          this.hooks.localKill();
         } else if (killer) {
           this.hooks.feed(`${killer.name} erased ${vn}`, 0);
         } else {

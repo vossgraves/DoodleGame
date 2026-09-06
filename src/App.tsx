@@ -73,6 +73,10 @@ const emptyHud = (): HudSnap => ({
   focusFrac: 0,
   focusReady: false,
   canSwap: false,
+  streakReady: [],
+  streak: 0,
+  uav: false,
+  piloting: false,
   radar: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
   radarHalf: 40,
@@ -379,6 +383,12 @@ export default function App() {
             </div>
           )}
           {touch && gstate === "playing" && <TouchControls gameRef={gameRef} />}
+          {gstate === "playing" && (
+            <StreakTray
+              hud={hud}
+              onUse={(k) => gameRef.current?.useStreak(k as Parameters<Game["useStreak"]>[0])}
+            />
+          )}
           {hud.canSwap && !swapping && (
             <button className="swap-btn" onClick={() => setSwapping(true)} aria-label="change loadout">
               <span>⋯</span>
@@ -1255,6 +1265,64 @@ function Minimap({ hud }: { hud: HudSnap }) {
   );
 }
 
+const STREAK_ICONS: Record<string, React.ReactNode> = {
+  uav: (
+    <>
+      <path d="M4 15h20M14 15l-4-7 4 1 4-1z" />
+      <path d="M8 19a8 8 0 0 1 12 0" />
+    </>
+  ),
+  drone: (
+    <>
+      <rect x="10" y="11" width="8" height="5" rx="1" />
+      <circle cx="6" cy="8" r="3" />
+      <circle cx="22" cy="8" r="3" />
+      <path d="M8.5 10l2 1.5M19.5 10l-2 1.5M12 16v3h4v-3" />
+    </>
+  ),
+  missile: (
+    <>
+      <path d="M6 14c0-4 5-9 12-10-1 7-6 12-10 12z" />
+      <path d="M8 16l-3 4 5-1" />
+      <circle cx="14" cy="9" r="1.6" />
+    </>
+  ),
+  swarm: (
+    <>
+      <circle cx="7" cy="8" r="2" />
+      <circle cx="15" cy="6" r="2" />
+      <circle cx="21" cy="11" r="2" />
+      <circle cx="10" cy="15" r="2" />
+      <circle cx="18" cy="17" r="2" />
+      <circle cx="5" cy="18" r="2" />
+    </>
+  ),
+};
+
+const STREAK_LABELS: Record<string, string> = {
+  uav: "UAV",
+  drone: "DRONE",
+  missile: "PREDATOR",
+  swarm: "SWARM",
+};
+
+/** Earned streaks, bottom-left, the way every shooter puts them. */
+function StreakTray({ hud, onUse }: { hud: HudSnap; onUse: (k: string) => void }) {
+  if (!hud.streakReady.length) return null;
+  return (
+    <div className="streak-tray">
+      {hud.streakReady.map((k) => (
+        <button key={k} className="streak" onClick={() => onUse(k)} aria-label={STREAK_LABELS[k] ?? k}>
+          <svg viewBox="0 0 28 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round">
+            {STREAK_ICONS[k]}
+          </svg>
+          <em>{STREAK_LABELS[k] ?? k}</em>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** Rounded rifle round, PUBG-style, so the ammo count reads at a glance. */
 function Bullet() {
   return (
@@ -1307,6 +1375,8 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
         <div className="text-[var(--red)]">{hud.combo > 1 ? `combo x${hud.combo}` : ""}</div>
       </div>
       <Minimap hud={hud} />
+      {hud.uav && <div className="uav-flag hud-bit">UAV</div>}
+      {hud.piloting && <div className="pilot-flag hud-bit">steering · drag to fly</div>}
 
       {/* waves are a PvE idea; the arena has none */}
       {hud.mode !== "arena" && (

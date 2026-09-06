@@ -804,8 +804,19 @@ export class Player {
     return w;
   }
 
+  /** Piloting a scorestreak: the body stays put and ignores input. */
+  frozen = false;
+
   update(dt: number) {
     const i = this.hooks.input;
+    if (this.frozen && this.alive) {
+      this.vel.x = 0;
+      this.vel.z = 0;
+      this.hooks.world.moveAABB(this.pos, this.vel, 0.34, this.height, dt, G);
+      this.eye.set(this.pos.x, this.pos.y + this.eyeH, this.pos.z);
+      this.center.set(this.pos.x, this.pos.y + this.height * 0.5, this.pos.z);
+      return;
+    }
     if (!this.alive) {
       this.deathT += dt;
       this.pitch = damp(this.pitch, 0.5, 3, dt);

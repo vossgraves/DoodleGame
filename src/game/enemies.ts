@@ -490,6 +490,13 @@ export class Combat {
         if (killed) this.onEnemyKilled(e, player);
       }
     }
+    // blasts have to reach people too, or grenades and streaks are PvE-only
+    for (const r of this.remotes) {
+      if (!r.alive) continue;
+      const d = r.center.distanceTo(pos);
+      if (d >= radius) continue;
+      this.onRemoteHit?.(r, dmg * (1 - d / radius), false, pos.clone());
+    }
     const pd = player.center.distanceTo(pos);
     if (pd < radius && player.alive) {
       player.takeDamage(dmg * 0.45 * (1 - pd / radius), pos);

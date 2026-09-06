@@ -5,6 +5,7 @@ import { Input } from "./input";
 import { AudioSys } from "./audio";
 import { buildLevel, disposeLevel, getMap, DEFAULT_MAP, type Level, type Mode } from "./level";
 import { ZoneView } from "./zone";
+import { Streaks, type StreakKind, type StreakTarget } from "./streaks";
 
 /** how long a fallen player's kit stays on the ground */
 const DROP_LIFE = 30;
@@ -62,6 +63,11 @@ export interface HudSnap {
   focusReady: boolean;
   /** the brief post-respawn window where the kit can still be swapped */
   canSwap: boolean;
+  /** scorestreaks earned and waiting to be called in */
+  streakReady: string[];
+  streak: number;
+  uav: boolean;
+  piloting: boolean;
   /** minimap blips in world space; the UI rotates them into the player's frame */
   radar: { x: number; z: number; hostile: boolean }[];
   radarSelf: { x: number; z: number; yaw: number };
@@ -105,6 +111,10 @@ const defaultHud = (): HudSnap => ({
   focusFrac: 0,
   focusReady: false,
   canSwap: false,
+  streakReady: [],
+  streak: 0,
+  uav: false,
+  piloting: false,
   radar: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
   radarHalf: 40,
@@ -143,6 +153,7 @@ export class Game {
   onNet: (() => void) | null = null;
   match!: MatchNet;
   zoneView!: ZoneView;
+  streaks!: Streaks;
 
   /**
    * Swap kit during the post-respawn window. Guarded here rather than in the UI
@@ -152,6 +163,40 @@ export class Game {
     if (this.swapWindow <= 0 || this.player.spentResource || !this.player.alive) return false;
     this.player.setLoadout(kinds);
     return true;
+  }
+
+  /** Everything the local player may hurt, for streaks to pick from. */
+  private streakTargets(): StreakTarget[] {
+    const out: StreakTarget[] = [];
+    for (const e of this.combat.enemies) {
+      if (!e.alive) continue;
+      out.push({
+        pos: e.pos,
+        center: e.center,
+        alive: e.alive,
+        hit: (amount) => {
+          if (e.takeDamage(amount, this.player.eye, 3)) {
+            this.combat.onEnemyKilled(e, this.player);
+            this.onKill(e.def.name, e.def.score, false);
+          }
+        },
+      });
+    }
+    for (const r of this.match.remotes.values()) {
+      if (!r.alive || !this.match.canHurt(r.id)) continue;
+      out.push({
+        pos: r.pos,
+        center: r.center,
+        alive: r.alive,
+        hit: (amount, crit) => this.match.reportHit(r.id, amount, this.player.eye, crit),
+      });
+    }
+    return out;
+  }
+
+  /** Call in an earned streak. */
+  useStreak(kind: StreakKind) {
+    return this.streaks.use(kind);
   }
 
   /** Apply a graphics preset to a running game. */
@@ -265,6 +310,7 @@ export class Game {
       feed: (text, pts) => this.addScore(pts, text),
       announce: (m, s) => this.announce(m, s),
       changed: () => this.onNet?.(),
+      localKill: () => this.streaks.addKill(),
     });
     // a hit on another player is reported to them; their client applies it
     this.combat.onRemoteHit = (t, dmg, crit) => this.match.reportHit(t.id, dmg, this.player.eye, crit);
@@ -280,6 +326,18 @@ export class Game {
     };
     this.combat.onPickupTaken = (id) => this.match.reportPickup(id);
     this.zoneView = new ZoneView(this.R.scene);
+    this.streaks = new Streaks({
+      scene: this.R.scene,
+      world: this.world,
+      hostiles: () => this.streakTargets(),
+      eye: () => this.player.eye,
+      pos: () => this.player.pos,
+      yaw: () => this.player.yaw,
+      boom: (at, r, d) => this.combat.explode(at, r, d, this.player),
+      tracer: (a, b) => this.combat.tracer(a, b),
+      announce: (m, sub) => this.announce(m, sub),
+      look: () => this.input.look,
+    });
     this.audio.setTune(mode === "zombies" ? "zombies" : "district");
     const sens = Number(localStorage.getItem("doodle_sens") || 100);
     const invert = localStorage.getItem("doodle_invert") === "1";
@@ -388,6 +446,7 @@ export class Game {
 
   private onKill(name: string, pts: number, crit: boolean) {
     this.kills += 1;
+    this.streaks.addKill();
     this.combo = Math.min(12, this.combo + 1);
     this.comboT = 2.6;
     this.addScore(pts, (crit ? "HEAD! " : "") + name);
@@ -429,6 +488,7 @@ export class Game {
   private handleDeath() {
     // online you come back; the match, not the run, is what ends.
     // reportDeath does the announcing, because it knows who killed you.
+    this.streaks.onDeath();
     if (this.match.inMatch) {
       this.match.reportDeath();
       return;
@@ -488,6 +548,13 @@ export class Game {
       } else if (this.combat.remotes.length) {
         this.combat.remotes = [];
       }
+      this.streaks.update(dt);
+      this.player.frozen = this.streaks.piloting;
+      const view = this.streaks.cameraView();
+      if (view) {
+        this.R.camera.position.copy(view.pos);
+        this.R.camera.lookAt(view.look);
+      }
       this.combat.update(dt, this.player, this.time);
       for (const a of this.level.animated) a.update(this.time);
 
@@ -536,9 +603,18 @@ export class Game {
     if (this.time - this.radarAt > 0.08) {
       this.radarAt = this.time;
       const blips: HudSnap["radar"] = [];
-      for (const e of this.combat.enemies) if (e.alive) blips.push({ x: e.pos.x, z: e.pos.z, hostile: true });
+      // a UAV is what turns the minimap from "nearby" into "everyone"
+      const reach = this.streaks.uavActive ? Infinity : 26;
+      const near = (x: number, z: number) => Math.hypot(x - this.player.pos.x, z - this.player.pos.z) <= reach;
+      for (const e of this.combat.enemies) {
+        if (e.alive && near(e.pos.x, e.pos.z)) blips.push({ x: e.pos.x, z: e.pos.z, hostile: true });
+      }
       for (const r of this.match.remotes.values()) {
-        if (r.alive) blips.push({ x: r.pos.x, z: r.pos.z, hostile: this.match.canHurt(r.id) });
+        const friendly = !this.match.canHurt(r.id);
+        // teammates always show; enemies need proximity or a UAV
+        if (r.alive && (friendly || near(r.pos.x, r.pos.z))) {
+          blips.push({ x: r.pos.x, z: r.pos.z, hostile: !friendly });
+        }
       }
       this.hud.radar = blips;
       this.hud.radarSelf = { x: this.player.pos.x, z: this.player.pos.z, yaw: this.player.yaw };
@@ -569,6 +645,10 @@ export class Game {
     this.hud.spread = 8 + wpn.spreadCur * 180;
     this.hud.ads = this.player.aiming;
     this.hud.melee = !wpn.def.isGun;
+    this.hud.streakReady = this.streaks.available();
+    this.hud.streak = this.streaks.streak;
+    this.hud.uav = this.streaks.uavActive;
+    this.hud.piloting = this.streaks.piloting;
     // spending anything — a bullet, a grenade, a swing — closes the window
     this.hud.canSwap =
       this.match.inMatch && this.player.alive && this.swapWindow > 0 && !this.player.spentResource;
@@ -600,6 +680,7 @@ export class Game {
     this.audio.stopMusic();
     this.combat.clear();
     this.match.leave();
+    this.streaks.dispose();
     this.zoneView.dispose(this.R.scene);
     disposeLevel(this.R.scene, this.level);
     this.R.dispose();
