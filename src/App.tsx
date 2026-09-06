@@ -1,8 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Game, type GameState, type HudSnap } from "./game/engine";
 import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
+import { WEAPONS, sanitizeLoadout, type WeaponKind } from "./game/player";
 
-type Screen = "menu" | "howto" | "settings" | "game";
+type Screen = "menu" | "howto" | "settings" | "loadout" | "game";
+
+const GUNS = WEAPONS.filter((w) => w.isGun);
+const isGun = (k: WeaponKind) => GUNS.some((g) => g.kind === k);
+
+function loadLoadout(): WeaponKind[] {
+  try {
+    return sanitizeLoadout(JSON.parse(localStorage.getItem("doodle_loadout") || "null"));
+  } catch {
+    return sanitizeLoadout(null);
+  }
+}
 
 const emptyHud = (): HudSnap => ({
   hp: 120,
@@ -52,6 +64,7 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>("menu");
   const [mode, setMode] = useState<Mode>("district");
   const [mapKey, setMapKey] = useState(() => localStorage.getItem("doodle_map") || DEFAULT_MAP);
+  const [loadout, setLoadout] = useState<WeaponKind[]>(loadLoadout);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
   const [gstate, setGstate] = useState<GameState>("playing");
   const [touch, setTouch] = useState(false);
@@ -85,7 +98,7 @@ export default function App() {
     if (screen !== "game") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas, mode, mapKey);
+    const g = new Game(canvas, mode, mapKey, loadout);
     gameRef.current = g;
     g.onHud = (h) => {
       hudLatest.current = h;
@@ -99,7 +112,7 @@ export default function App() {
       g.dispose();
       if (gameRef.current === g) gameRef.current = null;
     };
-  }, [screen, mode, mapKey, runId]);
+  }, [screen, mode, mapKey, loadout, runId]);
 
   useEffect(() => {
     const onVis = () => {
@@ -140,9 +153,20 @@ export default function App() {
           onZombies={() => launch("zombies")}
           onHow={() => setScreen("howto")}
           onSettings={() => setScreen("settings")}
+          onLoadout={() => setScreen("loadout")}
         />
       )}
       {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touch} />}
+      {screen === "loadout" && (
+        <LoadoutScreen
+          loadout={loadout}
+          onChange={(l) => {
+            setLoadout(l);
+            localStorage.setItem("doodle_loadout", JSON.stringify(l));
+          }}
+          onBack={() => setScreen("menu")}
+        />
+      )}
       {screen === "settings" && (
         <Settings
           sens={sens}
@@ -204,6 +228,7 @@ function Menu({
   onZombies,
   onHow,
   onSettings,
+  onLoadout,
 }: {
   bestD: number;
   bestZ: number;
@@ -213,6 +238,7 @@ function Menu({
   onZombies: () => void;
   onHow: () => void;
   onSettings: () => void;
+  onLoadout: () => void;
 }) {
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
@@ -265,6 +291,9 @@ function Menu({
         </div>
 
         <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <button className="ink-btn" onClick={onLoadout}>
+            loadout
+          </button>
           <button className="ink-btn" onClick={onHow}>
             how to play
           </button>
@@ -402,6 +431,76 @@ function Settings({
         <button className="ink-btn mt-8" onClick={onBack}>
           back
         </button>
+      </div>
+    </div>
+  );
+}
+
+function LoadoutScreen({
+  loadout,
+  onChange,
+  onBack,
+}: {
+  loadout: WeaponKind[];
+  onChange: (l: WeaponKind[]) => void;
+  onBack: () => void;
+}) {
+  const carried = loadout.filter(isGun);
+  const melee = loadout.find((k) => !isGun(k)) ?? "katana";
+
+  const setSlot = (slot: number, kind: WeaponKind) => {
+    const next = [...carried];
+    // if that gun already sits in another slot, swap them rather than carry it twice
+    const existing = next.indexOf(kind);
+    if (existing >= 0 && existing !== slot) next[existing] = next[slot];
+    next[slot] = kind;
+    onChange([...next, melee]);
+  };
+
+  return (
+    <div className="absolute inset-0 z-10 overflow-y-auto p-4 paper-bg">
+      <div className="ink-panel mx-auto w-full max-w-[860px] px-7 py-6">
+        <h2 className="m-0 text-center font-[Caveat,cursive] text-5xl">loadout</h2>
+        <p className="mt-1 text-center text-lg opacity-70">
+          three guns on 1–3, {WEAPONS.find((w) => w.kind === melee)?.name.toLowerCase()} always on 4
+        </p>
+
+        {[0, 1, 2].map((slot) => (
+          <div key={slot} className="mt-5">
+            <div className="mb-2 border-b-2 border-[var(--ink)] text-2xl">
+              slot {slot + 1} <span className="text-lg opacity-60">· {WEAPONS.find((w) => w.kind === carried[slot])?.name}</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {GUNS.map((w) => (
+                <button
+                  key={w.kind}
+                  className={`gun-chip ${carried[slot] === w.kind ? "on" : ""}`}
+                  onClick={() => setSlot(slot, w.kind)}
+                  title={w.hint}
+                >
+                  {w.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        <div className="mt-6 text-lg leading-snug opacity-80">
+          {carried.map((k) => {
+            const w = WEAPONS.find((x) => x.kind === k);
+            return (
+              <div key={k}>
+                <b>{w?.name}</b> — {w?.hint}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="mt-6 text-center">
+          <button className="ink-btn" onClick={onBack}>
+            back
+          </button>
+        </div>
       </div>
     </div>
   );

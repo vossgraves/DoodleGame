@@ -5,7 +5,16 @@ import { INK, makeInkMaterial } from "./renderer";
 import type { Input } from "./input";
 import type { AudioSys } from "./audio";
 
-export type WeaponKind = "rifle" | "shotgun" | "sniper" | "katana";
+export type WeaponKind =
+  | "rifle"
+  | "carbine"
+  | "smg"
+  | "lmg"
+  | "shotgun"
+  | "sniper"
+  | "revolver"
+  | "pistol"
+  | "katana";
 
 export interface WeaponDef {
   kind: WeaponKind;
@@ -31,6 +40,9 @@ export interface WeaponDef {
   fovKick: number;
   cycleDur: number;
   isGun: boolean;
+  /** rounds committed per trigger pull; 0 or absent means not a burst weapon */
+  burst?: number;
+  burstDelay?: number;
 }
 
 const DEFS: Record<WeaponKind, WeaponDef> = {
@@ -134,7 +146,153 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
     cycleDur: 0,
     isGun: false,
   },
+  carbine: {
+    kind: "carbine",
+    name: "CARBINE",
+    hint: "three-round burst · tap and re-tap",
+    magSize: 30,
+    reserve: 150,
+    maxReserve: 300,
+    interval: 0.38,
+    damage: 26,
+    headMul: 2.4,
+    pellets: 1,
+    spread: 0.012,
+    adsSpread: 0.003,
+    spreadKick: 0.012,
+    spreadMax: 0.075,
+    adsFov: 56,
+    auto: false,
+    reloadDur: 1.5,
+    reloadType: "mag",
+    falloff: null,
+    camKick: [0.016, 0.005],
+    fovKick: 1.5,
+    cycleDur: 0,
+    isGun: true,
+    burst: 3,
+    burstDelay: 0.07,
+  },
+  smg: {
+    kind: "smg",
+    name: "SMG",
+    hint: "spray · fast and loose up close",
+    magSize: 40,
+    reserve: 200,
+    maxReserve: 400,
+    interval: 1 / 16,
+    damage: 15,
+    headMul: 2.0,
+    pellets: 1,
+    spread: 0.028,
+    adsSpread: 0.012,
+    spreadKick: 0.012,
+    spreadMax: 0.11,
+    adsFov: 66,
+    auto: true,
+    reloadDur: 1.15,
+    reloadType: "mag",
+    falloff: [8, 24, 0.35],
+    camKick: [0.009, 0.005],
+    fovKick: 1.0,
+    cycleDur: 0,
+    isGun: true,
+  },
+  lmg: {
+    kind: "lmg",
+    name: "LMG",
+    hint: "belt-fed · hold it down, reload forever",
+    magSize: 90,
+    reserve: 270,
+    maxReserve: 540,
+    interval: 1 / 9,
+    damage: 22,
+    headMul: 2.0,
+    pellets: 1,
+    spread: 0.03,
+    adsSpread: 0.01,
+    spreadKick: 0.008,
+    spreadMax: 0.12,
+    adsFov: 64,
+    auto: true,
+    reloadDur: 3.2,
+    reloadType: "mag",
+    falloff: null,
+    camKick: [0.014, 0.006],
+    fovKick: 1.4,
+    cycleDur: 0,
+    isGun: true,
+  },
+  revolver: {
+    kind: "revolver",
+    name: "REVOLVER",
+    hint: "six shots · make every one count",
+    magSize: 6,
+    reserve: 36,
+    maxReserve: 72,
+    interval: 0.34,
+    damage: 72,
+    headMul: 2.6,
+    pellets: 1,
+    spread: 0.014,
+    adsSpread: 0.002,
+    spreadKick: 0.05,
+    spreadMax: 0.12,
+    adsFov: 54,
+    auto: false,
+    reloadDur: 2.2,
+    reloadType: "mag",
+    falloff: null,
+    camKick: [0.06, 0.014],
+    fovKick: 4.5,
+    cycleDur: 0.2,
+    isGun: true,
+  },
+  pistol: {
+    kind: "pistol",
+    name: "PISTOL",
+    hint: "semi · light, quick to reload",
+    magSize: 14,
+    reserve: 84,
+    maxReserve: 168,
+    interval: 0.14,
+    damage: 26,
+    headMul: 2.4,
+    pellets: 1,
+    spread: 0.012,
+    adsSpread: 0.004,
+    spreadKick: 0.014,
+    spreadMax: 0.07,
+    adsFov: 62,
+    auto: false,
+    reloadDur: 1.0,
+    reloadType: "mag",
+    falloff: [14, 34, 0.4],
+    camKick: [0.02, 0.006],
+    fovKick: 1.6,
+    cycleDur: 0,
+    isGun: true,
+  },
 };
+
+/** Every weapon, for loadout UIs. Guns first, melee last. */
+export const WEAPONS: { kind: WeaponKind; name: string; hint: string; isGun: boolean }[] = (
+  ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "katana"] as WeaponKind[]
+).map((k) => ({ kind: k, name: DEFS[k].name, hint: DEFS[k].hint, isGun: DEFS[k].isGun }));
+
+export const GUN_KINDS = WEAPONS.filter((w) => w.isGun).map((w) => w.kind);
+export const MELEE_KINDS = WEAPONS.filter((w) => !w.isGun).map((w) => w.kind);
+export const DEFAULT_LOADOUT: WeaponKind[] = ["rifle", "shotgun", "sniper", "katana"];
+
+/** Drop anything unknown and guarantee a usable set of slots. */
+export function sanitizeLoadout(raw: unknown): WeaponKind[] {
+  const all = new Set(WEAPONS.map((w) => w.kind));
+  const list = Array.isArray(raw) ? raw.filter((k): k is WeaponKind => all.has(k as WeaponKind)) : [];
+  const guns = list.filter((k) => DEFS[k].isGun).slice(0, 3);
+  if (!guns.length) return [...DEFAULT_LOADOUT];
+  const melee = list.find((k) => !DEFS[k].isGun) ?? "katana";
+  return [...guns, melee];
+}
 
 function bx(w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, parent: THREE.Object3D) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -179,6 +337,8 @@ export class Weapon {
   blocking = false;
   blockT = 0;
   slashT = 0;
+  burstLeft = 0;
+  burstT = 0;
   private ink: THREE.ShaderMaterial;
   private solid: THREE.ShaderMaterial;
   private orange: THREE.ShaderMaterial;
@@ -228,6 +388,43 @@ export class Weapon {
       this.placeFlash(0, 0.1, -1.3, 1.4);
       this.hand(0.14, -0.1, 0.05);
       this.hand(-0.06, 0.0, -0.4);
+    } else if (k === "carbine") {
+      cyl(0.042, 0.7, 0, 0.08, -0.46, m, this.root);
+      bx(0.12, 0.16, 0.5, 0, 0.04, -0.08, m, this.root);
+      bx(0.07, 0.22, 0.14, 0, -0.12, 0.08, b, this.root);
+      cyl(0.055, 0.22, 0, 0.18, -0.14, b, this.root);
+      this.placeFlash(0, 0.08, -0.84, 0.85);
+      this.hand(0.15, -0.12, 0.04);
+      this.hand(-0.05, -0.02, -0.24);
+    } else if (k === "smg") {
+      cyl(0.04, 0.5, 0, 0.07, -0.36, m, this.root);
+      bx(0.11, 0.15, 0.42, 0, 0.03, -0.05, m, this.root);
+      bx(0.07, 0.26, 0.1, 0, -0.14, 0.02, b, this.root);
+      bx(0.05, 0.2, 0.1, 0, -0.06, -0.16, b, this.root);
+      this.placeFlash(0, 0.07, -0.66, 0.8);
+      this.hand(0.15, -0.12, 0.02);
+      this.hand(-0.04, -0.06, -0.2);
+    } else if (k === "lmg") {
+      cyl(0.05, 1.0, 0, 0.1, -0.62, m, this.root);
+      bx(0.16, 0.2, 0.62, 0, 0.03, -0.05, m, this.root);
+      bx(0.09, 0.26, 0.16, 0, -0.14, 0.1, b, this.root);
+      cyl(0.14, 0.12, 0, -0.08, -0.06, b, this.root, "x");
+      bx(0.05, 0.1, 0.3, 0, 0.2, -0.35, b, this.root);
+      this.placeFlash(0, 0.1, -1.14, 1.2);
+      this.hand(0.16, -0.14, 0.08);
+      this.hand(-0.06, -0.02, -0.4);
+    } else if (k === "revolver") {
+      cyl(0.038, 0.44, 0, 0.06, -0.3, m, this.root);
+      cyl(0.09, 0.18, 0, 0.03, -0.04, b, this.root);
+      bx(0.07, 0.26, 0.13, 0, -0.12, 0.06, b, this.root);
+      this.placeFlash(0, 0.06, -0.54, 1.0);
+      this.hand(0.12, -0.1, 0.04);
+    } else if (k === "pistol") {
+      bx(0.09, 0.13, 0.42, 0, 0.05, -0.16, m, this.root);
+      bx(0.08, 0.24, 0.12, 0, -0.1, 0.02, b, this.root);
+      bx(0.05, 0.05, 0.1, 0, 0.02, -0.34, m, this.root);
+      this.placeFlash(0, 0.05, -0.42, 0.7);
+      this.hand(0.12, -0.08, 0.02);
     } else {
       // katana
       const blade = new THREE.Group();
@@ -272,6 +469,7 @@ export class Weapon {
     this.root.visible = false;
     this.reloading = false;
     this.blocking = false;
+    this.burstLeft = 0;
   }
 
   addAmmo(n: number) {
@@ -290,6 +488,7 @@ export class Weapon {
     this.fireT = Math.max(0, this.fireT - dt);
     this.cycleT = Math.max(0, this.cycleT - dt);
     this.slashT = Math.max(0, this.slashT - dt);
+    this.burstT = Math.max(0, this.burstT - dt);
     this.spreadCur = damp(this.spreadCur, this.def.spread, 6, dt);
     if (this.flash.visible) {
       this.flash.rotateZ(dt * 18);
@@ -333,6 +532,8 @@ export interface PlayerHooks {
   onNade: (origin: THREE.Vector3, dir: THREE.Vector3, charge: number) => void;
   onHurt: (amount: number, from: THREE.Vector3 | null) => void;
   onDeath: () => void;
+  /** weapons to carry; defaults to DEFAULT_LOADOUT */
+  loadout?: WeaponKind[];
 }
 
 const G = 26;
@@ -398,7 +599,7 @@ export class Player {
 
   constructor(hooks: PlayerHooks) {
     this.hooks = hooks;
-    this.weapons = [new Weapon("rifle"), new Weapon("shotgun"), new Weapon("sniper"), new Weapon("katana")];
+    this.weapons = sanitizeLoadout(hooks.loadout ?? DEFAULT_LOADOUT).map((k) => new Weapon(k));
     this.weapon = this.weapons[0];
     this.weapon.equip();
     hooks.camera.add(this.rig);
@@ -433,6 +634,7 @@ export class Player {
         w.mag = w.def.magSize;
         w.reserve = w.def.reserve;
         w.reloading = false;
+        w.burstLeft = 0;
       }
     }
     this.switchTo(0, true);
@@ -526,7 +728,10 @@ export class Player {
     if (i.pressed("slot4")) this.switchTo(3);
     if (i.pressed("nextWeapon")) this.nextWeapon(1);
     if (i.pressed("prevWeapon")) this.nextWeapon(-1);
-    if (i.pressed("melee") && this.weapon.def.kind !== "katana") this.switchTo(3);
+    if (i.pressed("melee") && this.weapon.def.isGun) {
+      const mi = this.weapons.findIndex((w) => !w.def.isGun);
+      if (mi >= 0) this.switchTo(mi);
+    }
 
     const wantCrouch = i.down("crouch");
     this.sprinting = i.down("sprint") && !this.aiming && !wantCrouch && i.move.y > 0.3;
@@ -641,11 +846,30 @@ export class Player {
           this.fovKick.kick(90);
         }
       }
-    } else if ((this.weapon.def.auto ? fireHeld : firePress) && canFire) {
-      if (this.weapon.mag <= 0) {
-        if (this.weapon.beginReload()) this.hooks.audio.reload();
-      } else {
-        this.shoot();
+    } else {
+      const w = this.weapon;
+      const burst = w.def.burst ?? 0;
+      if (burst > 0) {
+        // a trigger pull commits the whole burst; the interval only applies once it is spent
+        if (firePress && canFire && w.burstLeft <= 0) {
+          if (w.mag <= 0) {
+            if (w.beginReload()) this.hooks.audio.reload();
+          } else w.burstLeft = burst;
+        }
+        if (w.burstLeft > 0 && w.burstT <= 0 && !w.reloading) {
+          if (w.mag <= 0) w.burstLeft = 0;
+          else {
+            this.shoot();
+            w.burstLeft -= 1;
+            w.burstT = w.def.burstDelay ?? 0.07;
+          }
+        }
+      } else if ((w.def.auto ? fireHeld : firePress) && canFire) {
+        if (w.mag <= 0) {
+          if (w.beginReload()) this.hooks.audio.reload();
+        } else {
+          this.shoot();
+        }
       }
     }
 

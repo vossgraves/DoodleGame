@@ -4,7 +4,7 @@ import { World } from "./physics";
 import { Input } from "./input";
 import { AudioSys } from "./audio";
 import { buildLevel, disposeLevel, DEFAULT_MAP, type Level, type Mode } from "./level";
-import { Player, type Weapon } from "./player";
+import { Player, type Weapon, type WeaponKind } from "./player";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
 import { clamp } from "./math";
 
@@ -128,7 +128,7 @@ export class Game {
   private disposed = false;
   private onResize: () => void;
 
-  constructor(canvas: HTMLCanvasElement, mode: Mode, mapKey: string = DEFAULT_MAP) {
+  constructor(canvas: HTMLCanvasElement, mode: Mode, mapKey: string = DEFAULT_MAP, loadout?: WeaponKind[]) {
     this.canvas = canvas;
     this.mode = mode;
     this.mapKey = mapKey;
@@ -149,6 +149,7 @@ export class Game {
       onNade: (o, d, c) => this.combat.throwNade(o, d, c),
       onHurt: (_a, from) => this.handleHurt(from),
       onDeath: () => this.handleDeath(),
+      loadout,
     });
     this.player.reset(this.level.playerStart);
     this.audio.setTune(mode === "zombies" ? "zombies" : "district");

@@ -489,6 +489,25 @@ canvas.game-canvas {
   background: rgba(208, 32, 48, 0.1);
 }
 
+.gun-chip {
+  border: 2.5px solid var(--ink);
+  border-radius: 9px;
+  background: rgba(246, 243, 230, 0.5);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 18px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.gun-chip:hover {
+  background: rgba(26, 48, 192, 0.1);
+}
+.gun-chip.on {
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(208, 32, 48, 0.12);
+}
+
 .touch-layer {
   position: absolute;
   inset: 0;
