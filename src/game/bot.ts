@@ -121,6 +121,8 @@ export class Bot implements LocalSnapshotSource {
   private stuckT = 0;
   private avoidT = 0;
   private avoidDir = 1;
+  private lastPos = new THREE.Vector3();
+  private wedgedT = 0;
   private waypoint: THREE.Vector3 | null = null;
   private aimErr = new THREE.Vector2();
 
@@ -216,6 +218,33 @@ export class Bot implements LocalSnapshotSource {
     else this.wander(dt);
 
     this.integrate(dt);
+    this.watchdog(dt, !!target);
+  }
+
+  /**
+   * These bots steer straight at what they want with no navmesh, so some corner
+   * of some map will always wedge one — spawning on a rooftop and pressing into
+   * a parapet, say. Rather than leave it standing there for the whole match,
+   * notice it has gone nowhere while actively trying, and put it back in play.
+   */
+  private watchdog(dt: number, hasTarget: boolean) {
+    const trying = hasTarget || !!this.waypoint;
+    const moved = this.pos.distanceToSquared(this.lastPos);
+    this.lastPos.copy(this.pos);
+    // ~1.2 units/sec at 60fps: slower than that while trying to move is wedged
+    if (trying && moved < 0.0004) this.wedgedT += dt;
+    else this.wedgedT = 0;
+    if (this.wedgedT > 3.5) {
+      this.wedgedT = 0;
+      // relocate rather than respawn: being stuck should not heal it or wipe the
+      // damage credit someone has already put into it
+      this.pos.copy(this.farSpawn());
+      this.vel.set(0, 0, 0);
+      this.waypoint = null;
+      this.targetId = null;
+      this.lastPos.copy(this.pos);
+      this.syncBody();
+    }
   }
 
   private currentTarget(): BotCandidate | null {
