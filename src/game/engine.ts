@@ -3,7 +3,7 @@ import { InkRenderer } from "./renderer";
 import { World } from "./physics";
 import { Input } from "./input";
 import { AudioSys } from "./audio";
-import { buildLevel, disposeLevel, type Level, type Mode } from "./level";
+import { buildLevel, disposeLevel, DEFAULT_MAP, type Level, type Mode } from "./level";
 import { Player, type Weapon } from "./player";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
 import { clamp } from "./math";
@@ -102,6 +102,7 @@ export class Game {
   player: Player;
   combat: Combat;
   mode: Mode;
+  mapKey: string;
   state: GameState = "playing";
   wave = 0;
   score = 0;
@@ -127,14 +128,15 @@ export class Game {
   private disposed = false;
   private onResize: () => void;
 
-  constructor(canvas: HTMLCanvasElement, mode: Mode) {
+  constructor(canvas: HTMLCanvasElement, mode: Mode, mapKey: string = DEFAULT_MAP) {
     this.canvas = canvas;
     this.mode = mode;
+    this.mapKey = mapKey;
     this.R = new InkRenderer(canvas);
     this.R.night = mode === "zombies" ? 1 : 0;
     this.input = new Input(canvas);
     this.best = Number(localStorage.getItem(mode === "zombies" ? "doodle_zbest" : "doodle_best") || 0);
-    this.level = buildLevel(this.R.scene, this.world, mode);
+    this.level = buildLevel(this.R.scene, this.world, mode, mapKey);
     this.combat = new Combat(this.world, this.R.scene, this.audio);
     this.player = new Player({
       world: this.world,

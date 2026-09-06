@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Game, type GameState, type HudSnap } from "./game/engine";
-import type { Mode } from "./game/level";
+import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
 
 type Screen = "menu" | "howto" | "settings" | "game";
 
@@ -51,6 +51,7 @@ export default function App() {
   const gameRef = useRef<Game | null>(null);
   const [screen, setScreen] = useState<Screen>("menu");
   const [mode, setMode] = useState<Mode>("district");
+  const [mapKey, setMapKey] = useState(() => localStorage.getItem("doodle_map") || DEFAULT_MAP);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
   const [gstate, setGstate] = useState<GameState>("playing");
   const [touch, setTouch] = useState(false);
@@ -84,7 +85,7 @@ export default function App() {
     if (screen !== "game") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas, mode);
+    const g = new Game(canvas, mode, mapKey);
     gameRef.current = g;
     g.onHud = (h) => {
       hudLatest.current = h;
@@ -98,7 +99,7 @@ export default function App() {
       g.dispose();
       if (gameRef.current === g) gameRef.current = null;
     };
-  }, [screen, mode, runId]);
+  }, [screen, mode, mapKey, runId]);
 
   useEffect(() => {
     const onVis = () => {
@@ -130,6 +131,11 @@ export default function App() {
         <Menu
           bestD={bestD}
           bestZ={bestZ}
+          mapKey={mapKey}
+          onMap={(k) => {
+            setMapKey(k);
+            localStorage.setItem("doodle_map", k);
+          }}
           onDistrict={() => launch("district")}
           onZombies={() => launch("zombies")}
           onHow={() => setScreen("howto")}
@@ -192,6 +198,8 @@ export default function App() {
 function Menu({
   bestD,
   bestZ,
+  mapKey,
+  onMap,
   onDistrict,
   onZombies,
   onHow,
@@ -199,6 +207,8 @@ function Menu({
 }: {
   bestD: number;
   bestZ: number;
+  mapKey: string;
+  onMap: (k: string) => void;
   onDistrict: () => void;
   onZombies: () => void;
   onHow: () => void;
@@ -219,7 +229,19 @@ function Menu({
         </h1>
         <p className="mt-2 text-xl opacity-80">erase them before they ink the page</p>
 
-        <div className="mt-8 flex flex-col items-stretch justify-center gap-4 sm:flex-row sm:items-stretch">
+        <div className="mt-7">
+          <div className="mb-2 text-lg uppercase tracking-widest opacity-60">pick a page</div>
+          <div className="flex flex-wrap items-stretch justify-center gap-2">
+            {MAPS.map((m) => (
+              <button key={m.key} className={`map-chip ${m.key === mapKey ? "on" : ""}`} onClick={() => onMap(m.key)}>
+                <div className="text-xl leading-tight">{m.name}</div>
+                <div className="text-sm leading-tight opacity-70">{m.blurb}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-7 flex flex-col items-stretch justify-center gap-4 sm:flex-row sm:items-stretch">
           <button className="ink-panel mode-card p-5 text-left" onClick={onDistrict}>
             <div className="text-sm opacity-70">WAVE SURVIVAL</div>
             <div className="font-[Caveat,cursive] text-4xl">DISTRICT</div>

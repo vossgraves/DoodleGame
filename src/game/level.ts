@@ -6,6 +6,7 @@ import { rand } from "./math";
 export type Mode = "district" | "zombies";
 
 export interface Level {
+  key: string;
   meshes: THREE.Object3D[];
   animated: { mesh: THREE.Object3D; update: (t: number) => void }[];
   spawns: THREE.Vector3[];
@@ -13,6 +14,24 @@ export interface Level {
   pickups: THREE.Vector3[];
   playerStart: THREE.Vector3;
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+}
+
+export interface MapDef {
+  key: string;
+  name: string;
+  blurb: string;
+  /** arena half-extent; the perimeter wall sits here */
+  half: number;
+  playerStart: [number, number];
+  build: (k: MapKit) => void;
+}
+
+interface BoxOpts {
+  ink?: number;
+  noCollide?: boolean;
+  noShoot?: boolean;
+  fill?: boolean;
+  jitter?: number;
 }
 
 function jitterGeo(g: THREE.BufferGeometry, amt: number) {
@@ -24,53 +43,76 @@ function jitterGeo(g: THREE.BufferGeometry, amt: number) {
   g.computeVertexNormals();
 }
 
-export function buildLevel(scene: THREE.Scene, world: World, mode: Mode): Level {
-  const meshes: THREE.Object3D[] = [];
-  const animated: Level["animated"] = [];
-  const spawns: THREE.Vector3[] = [];
-  const snipers: THREE.Vector3[] = [];
-  const pickups: THREE.Vector3[] = [];
-  const night = mode === "zombies";
-  const inkWall = night ? INK.BLACK : INK.BLUE;
-  const inkAccent = night ? INK.RED : INK.ORANGE;
+/**
+ * Shared drawing kit every map builds through. It owns the material cache and the
+ * accumulating mesh/spawn lists so a map body reads as pure layout.
+ *
+ * Spawn points are collected as raw x/z pairs and resolved to ground height after
+ * the map finishes building — groundY() is only meaningful once the geometry exists.
+ */
+export class MapKit {
+  scene: THREE.Scene;
+  world: World;
+  night: boolean;
+  inkWall: number;
+  inkAccent: number;
+  meshes: THREE.Object3D[] = [];
+  animated: Level["animated"] = [];
+  snipers: THREE.Vector3[] = [];
+  pickups: THREE.Vector3[] = [];
+  rawSpawns: [number, number][] = [];
+  private mats: Record<number, THREE.ShaderMaterial> = {};
 
-  const mats: Record<number, THREE.ShaderMaterial> = {};
-  const mat = (ink: number, fill = false) => {
+  constructor(scene: THREE.Scene, world: World, night: boolean) {
+    this.scene = scene;
+    this.world = world;
+    this.night = night;
+    this.inkWall = night ? INK.BLACK : INK.BLUE;
+    this.inkAccent = night ? INK.RED : INK.ORANGE;
+  }
+
+  mat(ink: number, fill = false) {
     const k = ink + (fill ? 10 : 0);
-    if (!mats[k]) mats[k] = makeInkMaterial({ ink, fill, shadeBias: fill ? 0 : -0.05 });
-    return mats[k];
-  };
+    if (!this.mats[k]) this.mats[k] = makeInkMaterial({ ink, fill, shadeBias: fill ? 0 : -0.05 });
+    return this.mats[k];
+  }
 
-  const addMesh = (g: THREE.BufferGeometry, ink: number, x: number, y: number, z: number, fill = false) => {
+  add<T extends THREE.Object3D>(o: T): T {
+    this.scene.add(o);
+    this.meshes.push(o);
+    return o;
+  }
+
+  mesh(g: THREE.BufferGeometry, ink: number, x: number, y: number, z: number, fill = false) {
     jitterGeo(g, 0.018);
-    const m = new THREE.Mesh(g, mat(ink, fill));
+    const m = new THREE.Mesh(g, this.mat(ink, fill));
     m.position.set(x, y, z);
-    scene.add(m);
-    meshes.push(m);
-    return m;
-  };
+    return this.add(m);
+  }
 
-  const box = (cx: number, y: number, cz: number, w: number, h: number, d: number, o: { ink?: number; noCollide?: boolean; noShoot?: boolean; fill?: boolean; jitter?: number } = {}) => {
+  /** Axis-aligned block. y is the *base*, not the centre. */
+  box(cx: number, y: number, cz: number, w: number, h: number, d: number, o: BoxOpts = {}) {
     const g = new THREE.BoxGeometry(w, h, d);
     if (o.jitter !== 0) jitterGeo(g, o.jitter ?? 0.02);
-    const m = new THREE.Mesh(g, mat(o.ink ?? inkWall, o.fill));
+    const m = new THREE.Mesh(g, this.mat(o.ink ?? this.inkWall, o.fill));
     m.position.set(cx, y + h / 2, cz);
-    scene.add(m);
-    meshes.push(m);
-    if (!o.noCollide) world.addBox(cx, y, cz, w, h, d, { noShoot: o.noShoot });
+    this.add(m);
+    if (!o.noCollide) this.world.addBox(cx, y, cz, w, h, d, { noShoot: o.noShoot });
     return m;
-  };
+  }
 
-  const P = 40;
-  world.bounds = { minX: -P + 1, maxX: P - 1, minZ: -P + 1, maxZ: P - 1 };
-  // ground + perimeter
-  box(0, -1, 0, 2 * P + 8, 1, 2 * P + 8, { ink: inkWall, jitter: 0.01 });
-  box(0, 0, -P, 2 * P + 6, 16, 4, { ink: inkWall });
-  box(0, 0, P, 2 * P + 6, 16, 4, { ink: inkWall });
-  box(-P, 0, 0, 4, 16, 2 * P + 6, { ink: inkWall });
-  box(P, 0, 0, 4, 16, 2 * P + 6, { ink: inkWall });
+  /** Ground slab plus the four perimeter walls. */
+  arena(half: number, wallH = 16) {
+    const P = half;
+    this.world.bounds = { minX: -P + 1, maxX: P - 1, minZ: -P + 1, maxZ: P - 1 };
+    this.box(0, -1, 0, 2 * P + 8, 1, 2 * P + 8, { ink: this.inkWall, jitter: 0.01 });
+    this.box(0, 0, -P, 2 * P + 6, wallH, 4, { ink: this.inkWall });
+    this.box(0, 0, P, 2 * P + 6, wallH, 4, { ink: this.inkWall });
+    this.box(-P, 0, 0, 4, wallH, 2 * P + 6, { ink: this.inkWall });
+    this.box(P, 0, 0, 4, wallH, 2 * P + 6, { ink: this.inkWall });
+  }
 
-  const windowRow = (cx: number, cz: number, w: number, d: number, floors: number, face: "x" | "z", sign: number) => {
+  windowRow(cx: number, cz: number, w: number, d: number, floors: number, face: "x" | "z", sign: number) {
     for (let f = 0; f < floors; f++) {
       const y = 1.4 + f * 3.1;
       const n = Math.max(1, Math.floor((face === "x" ? d : w) / 2.4));
@@ -80,270 +122,904 @@ export function buildLevel(scene: THREE.Scene, world: World, mode: Mode): Level 
         const z = face === "x" ? cz - d / 2 + t * d : cz + sign * (d / 2 + 0.06);
         const gw = face === "z" ? 0.7 : 0.08;
         const gd = face === "x" ? 0.7 : 0.08;
-        box(x, y, z, gw, 1.1, gd, { ink: night ? INK.RED : INK.BLACK, noCollide: true, fill: night, jitter: 0.01 });
-        if (night && Math.random() < 0.45) {
-          // boarded X
+        this.box(x, y, z, gw, 1.1, gd, {
+          ink: this.night ? INK.RED : INK.BLACK,
+          noCollide: true,
+          fill: this.night,
+          jitter: 0.01,
+        });
+        if (this.night && Math.random() < 0.45) {
           const plank = new THREE.BoxGeometry(0.08, 1.3, 0.08);
-          const m1 = new THREE.Mesh(plank, mat(INK.RED));
+          const m1 = new THREE.Mesh(plank, this.mat(INK.RED));
           m1.position.set(x, y + 0.55, z);
           m1.rotation.z = 0.7;
-          scene.add(m1);
-          meshes.push(m1);
+          this.add(m1);
           const m2 = m1.clone();
           m2.rotation.z = -0.7;
-          scene.add(m2);
-          meshes.push(m2);
+          this.add(m2);
         }
       }
     }
-  };
-
-  // city blocks
-  const buildings: Array<[number, number, number, number, number, number]> = [
-    [-26, -26, 16, 11, 16, 0],
-    [24, -24, 18, 9, 14, 0],
-    [-24, 22, 14, 13, 18, 0],
-    [26, 24, 16, 10, 14, 0],
-    [-8, -28, 10, 7, 12, 0],
-    [8, 28, 12, 8, 10, 0],
-    [-30, 4, 10, 8, 14, 0],
-    [30, -6, 10, 7, 16, 0],
-  ];
-  for (const [x, z, w, h, d] of buildings) {
-    box(x, 0, z, w, h, d, { ink: inkWall });
-    windowRow(x, z, w, d, Math.floor(h / 3), "z", 1);
-    windowRow(x, z, w, d, Math.floor(h / 3), "z", -1);
-    windowRow(x, z, w, d, Math.floor(h / 3), "x", 1);
-    windowRow(x, z, w, d, Math.floor(h / 3), "x", -1);
-    // rooftop lip
-    box(x, h, z, w + 0.4, 0.35, d + 0.4, { ink: inkAccent, noCollide: false });
   }
 
-  // low walls / cover
-  const cover: Array<[number, number, number, number, number]> = [
-    [-6, 6, 4, 1.2, 1.1],
-    [7, -4, 5, 1.1, 1.2],
-    [2, 12, 3.5, 1.3, 1.1],
-    [-12, -8, 4, 1.2, 1.4],
-    [14, 8, 3.2, 1.15, 1.2],
-    [-16, 10, 2.8, 1.4, 1.1],
-    [10, -14, 4.4, 1.2, 1.3],
-    [0, -10, 6, 0.9, 1.0],
-    [-4, 18, 3, 1.2, 1.1],
-    [18, 2, 2.5, 1.5, 1.2],
-  ];
-  for (const [x, z, w, h, d] of cover) box(x, 0, z, w, h, d, { ink: inkWall });
-
-  // crates
-  const crates = [
-    [-10, 2],
-    [-9.1, 2.2],
-    [12, -8],
-    [12.9, -7.4],
-    [4, 6],
-    [-18, -12],
-    [16, 14],
-    [-2, -16],
-    [8, 10],
-    [-14, 16],
-  ];
-  for (const [x, z] of crates) {
-    const s = rand(0.7, 1.15);
-    box(x, 0, z, s, s, s, { ink: Math.random() < 0.3 ? inkAccent : inkWall });
+  /** Block with windows on all four faces and a coloured roof lip. */
+  building(x: number, z: number, w: number, h: number, d: number) {
+    this.box(x, 0, z, w, h, d, { ink: this.inkWall });
+    const floors = Math.floor(h / 3);
+    this.windowRow(x, z, w, d, floors, "z", 1);
+    this.windowRow(x, z, w, d, floors, "z", -1);
+    this.windowRow(x, z, w, d, floors, "x", 1);
+    this.windowRow(x, z, w, d, floors, "x", -1);
+    this.box(x, h, z, w + 0.4, 0.35, d + 0.4, { ink: this.inkAccent });
   }
 
-  // doodle cars (cover)
-  const cars: Array<[number, number, number]> = [
-    [-4, -18, 0.4],
-    [15, -2, 1.2],
-    [-20, 8, -0.5],
-    [6, 16, 2.1],
-  ];
-  for (const [x, z, rot] of cars) {
-    const g = new THREE.Group();
-    g.position.set(x, 0, z);
-    g.rotation.y = rot;
-    const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.0, 1.6), mat(night ? INK.BLACK : INK.BLUE));
-    body.position.y = 0.7;
-    g.add(body);
-    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 1.5), mat(night ? INK.RED : INK.BLACK));
-    cab.position.set(-0.3, 1.4, 0);
-    g.add(cab);
-    for (const wz of [-0.85, 0.85])
-      for (const wx of [-1.1, 1.1]) {
-        const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.22, 8), mat(INK.BLACK, true));
-        wh.rotation.z = Math.PI / 2;
-        wh.position.set(wx, 0.32, wz);
-        g.add(wh);
-      }
-    scene.add(g);
-    meshes.push(g);
-    world.addBox(x, 0, z, 3.4, 1.5, 1.7);
-  }
-
-  // stairs onto a low roof platform
-  const stairs = (sx: number, sz: number, dir: 1 | -1, axis: "x" | "z", steps = 8, rise = 0.32, run = 0.48, width = 2.2) => {
+  stairs(sx: number, sz: number, dir: 1 | -1, axis: "x" | "z", steps = 8, rise = 0.32, run = 0.48, width = 2.2) {
     for (let i = 0; i < steps; i++) {
       const c = (i + 0.5) * run;
       const h = (i + 1) * rise;
       const cx = axis === "x" ? sx + dir * c : sx;
       const cz = axis === "z" ? sz + dir * c : sz;
-      box(cx, 0, cz, axis === "x" ? run + 0.02 : width, h, axis === "z" ? run + 0.02 : width, { ink: inkWall, jitter: 0.01 });
+      this.box(cx, 0, cz, axis === "x" ? run + 0.02 : width, h, axis === "z" ? run + 0.02 : width, {
+        ink: this.inkWall,
+        jitter: 0.01,
+      });
     }
-  };
-  stairs(-14, -18, 1, "z", 10);
-  box(-14, 3.2, -12.4, 6, 0.35, 4, { ink: inkWall });
-  stairs(18, 12, -1, "x", 9);
-  box(13.2, 2.88, 12, 4, 0.35, 5, { ink: inkWall });
-
-  // plaza fountain / lamp
-  const fountain = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.6, 10), mat(inkAccent));
-  fountain.position.set(0, 0.3, 0);
-  scene.add(fountain);
-  meshes.push(fountain);
-  world.addBox(0, 0, 0, 4.6, 0.6, 4.6);
-  const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1.6, 6), mat(inkWall));
-  spout.position.set(0, 1.3, 0);
-  scene.add(spout);
-  meshes.push(spout);
-  const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 6), mat(night ? INK.RED : INK.BLUE, true));
-  bowl.position.set(0, 2.1, 0);
-  scene.add(bowl);
-  meshes.push(bowl);
-
-  // lamp posts
-  const lamps = [
-    [-10, -10],
-    [10, 10],
-    [-10, 10],
-    [10, -10],
-    [0, 22],
-    [0, -22],
-  ];
-  for (const [x, z] of lamps) {
-    box(x, 0, z, 0.22, 4.4, 0.22, { ink: INK.BLACK, noShoot: true });
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), mat(night ? INK.ORANGE : INK.ORANGE, true));
-    bulb.position.set(x, 4.6, z);
-    scene.add(bulb);
-    meshes.push(bulb);
   }
 
-  // dumpsters
-  for (const [x, z] of [
-    [-22, -8],
-    [22, 10],
-    [-6, 24],
-  ] as [number, number][]) {
-    box(x, 0, z, 2.2, 1.4, 1.2, { ink: night ? INK.GREEN : INK.BLACK });
+  lamp(x: number, z: number, h = 4.4) {
+    this.box(x, 0, z, 0.22, h, 0.22, { ink: INK.BLACK, noShoot: true });
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), this.mat(INK.ORANGE, true));
+    bulb.position.set(x, h + 0.2, z);
+    this.add(bulb);
   }
 
-  // fire escapes / ledges
-  const ledges: Array<[number, number, number, number]> = [
-    [-36, -12, 1.4, 6],
-    [36, 14, 1.4, 6],
-    [-12, -36, 6, 1.4],
-    [10, 36, 6, 1.4],
-  ];
-  for (const [x, z, w, d] of ledges) {
-    box(x, 6, z, w, 0.3, d, { ink: inkAccent });
-    box(x, 3.2, z, w, 0.3, d, { ink: inkAccent });
+  crate(x: number, z: number, s = rand(0.7, 1.15)) {
+    this.box(x, 0, z, s, s, s, { ink: Math.random() < 0.3 ? this.inkAccent : this.inkWall });
   }
 
-  // rings / doodle props
-  for (const [x, y, z] of [
-    [0, 5, 0],
-    [-16, 4, 4],
-    [14, 3.5, -10],
-  ] as [number, number, number][]) {
-    const t = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.08, 6, 14), mat(INK.ORANGE));
-    t.position.set(x, y, z);
-    t.rotation.x = Math.PI / 2;
-    scene.add(t);
-    meshes.push(t);
+  barrel(x: number, z: number, h = 1.4) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, h, 9), this.mat(this.inkAccent));
+    m.position.set(x, h / 2, z);
+    this.add(m);
+    this.world.addBox(x, 0, z, 1, h, 1);
   }
 
-  // paper planes
-  for (let i = 0; i < 4; i++) {
-    const g = new THREE.ConeGeometry(0.7, 2.2, 3);
-    g.rotateX(Math.PI / 2);
-    const m = new THREE.Mesh(g, mat(night ? INK.RED : INK.BLUE));
-    scene.add(m);
-    meshes.push(m);
-    const r = 18 + i * 6;
-    const h = 9 + i * 2.2;
-    const ph = i * 1.7;
-    const sp = 0.12 + i * 0.02;
-    animated.push({
-      mesh: m,
-      update: (t) => {
+  tree(x: number, z: number) {
+    this.box(x, 0, z, 0.35, 2.2, 0.35, { ink: INK.BLACK, noShoot: true });
+    this.mesh(new THREE.SphereGeometry(1.3, 8, 6), this.night ? INK.BLACK : INK.GREEN, x, 3.1, z);
+  }
+
+  car(x: number, z: number, rot: number) {
+    const g = new THREE.Group();
+    g.position.set(x, 0, z);
+    g.rotation.y = rot;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.0, 1.6), this.mat(this.night ? INK.BLACK : INK.BLUE));
+    body.position.y = 0.7;
+    g.add(body);
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.8, 1.5), this.mat(this.night ? INK.RED : INK.BLACK));
+    cab.position.set(-0.3, 1.4, 0);
+    g.add(cab);
+    for (const wz of [-0.85, 0.85])
+      for (const wx of [-1.1, 1.1]) {
+        const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.22, 8), this.mat(INK.BLACK, true));
+        wh.rotation.z = Math.PI / 2;
+        wh.position.set(wx, 0.32, wz);
+        g.add(wh);
+      }
+    this.add(g);
+    this.world.addBox(x, 0, z, 3.4, 1.5, 1.7);
+  }
+
+  /** Flat walkable slab — rooftop decks, catwalks, plank bridges. */
+  deck(x: number, y: number, z: number, w: number, d: number, ink = this.inkAccent) {
+    this.box(x, y, z, w, 0.3, d, { ink });
+  }
+
+  spawn(x: number, z: number) {
+    this.rawSpawns.push([x, z]);
+  }
+  sniper(x: number, y: number, z: number) {
+    this.snipers.push(new THREE.Vector3(x, y, z));
+  }
+  pickup(x: number, y: number, z: number) {
+    this.pickups.push(new THREE.Vector3(x, y, z));
+  }
+
+  /** Register a mesh that moves every frame. */
+  float(mesh: THREE.Object3D, update: (t: number) => void) {
+    this.animated.push({ mesh, update });
+  }
+
+  /** Paper planes circling overhead — shared ambient dressing. */
+  planes(count = 4, baseR = 18) {
+    for (let i = 0; i < count; i++) {
+      const g = new THREE.ConeGeometry(0.7, 2.2, 3);
+      g.rotateX(Math.PI / 2);
+      const m = new THREE.Mesh(g, this.mat(this.night ? INK.RED : INK.BLUE));
+      this.add(m);
+      const r = baseR + i * 6;
+      const h = 9 + i * 2.2;
+      const ph = i * 1.7;
+      const sp = 0.12 + i * 0.02;
+      this.float(m, (t) => {
         const a = t * sp + ph;
         m.position.set(Math.cos(a) * r, h + Math.sin(a * 2.2) * 1.4, Math.sin(a) * r * 0.75);
         m.lookAt(Math.cos(a + 0.08) * r, h, Math.sin(a + 0.08) * r * 0.75);
-      },
-    });
-  }
-
-  // graffiti scribbles on a wall (zombies)
-  if (night) {
-    for (let i = 0; i < 12; i++) {
-      const g = new THREE.BoxGeometry(rand(0.4, 1.6), 0.08, 0.08);
-      const m = new THREE.Mesh(g, mat(INK.RED, true));
-      m.position.set(rand(-30, 30), rand(1.2, 3.5), -37.7);
-      m.rotation.z = rand(-0.4, 0.4);
-      scene.add(m);
-      meshes.push(m);
+      });
     }
   }
+}
 
-  // spawn points around streets
-  const spawnPts = [
-    [0, 32],
-    [0, -32],
-    [32, 0],
-    [-32, 0],
-    [20, 20],
-    [-20, 20],
-    [20, -20],
-    [-20, -20],
-    [8, -30],
-    [-28, 12],
-    [28, -14],
-    [-12, 30],
-    [14, 30],
-    [-30, -16],
-    [30, 18],
-    [0, 18],
-  ];
-  for (const [x, z] of spawnPts) spawns.push(new THREE.Vector3(x, world.groundY(x, z) + 0.05, z));
+// ---------------------------------------------------------------------------
+// maps
+// ---------------------------------------------------------------------------
 
-  snipers.push(new THREE.Vector3(-26, 11.2, -26));
-  snipers.push(new THREE.Vector3(24, 9.2, -24));
-  snipers.push(new THREE.Vector3(-24, 13.2, 22));
-  snipers.push(new THREE.Vector3(26, 10.2, 24));
-  snipers.push(new THREE.Vector3(-14, 3.6, -12.4));
+const district: MapDef = {
+  key: "district",
+  name: "DOODLE DISTRICT",
+  blurb: "streets, rooftops and fire escapes",
+  half: 40,
+  playerStart: [0, 28],
+  build: (k) => {
+    k.arena(40);
 
-  pickups.push(new THREE.Vector3(4, 0.6, 4));
-  pickups.push(new THREE.Vector3(-8, 0.6, 8));
-  pickups.push(new THREE.Vector3(12, 0.6, -6));
+    const buildings: Array<[number, number, number, number, number]> = [
+      [-26, -26, 16, 11, 16],
+      [24, -24, 18, 9, 14],
+      [-24, 22, 14, 13, 18],
+      [26, 24, 16, 10, 14],
+      [-8, -28, 10, 7, 12],
+      [8, 28, 12, 8, 10],
+      [-30, 4, 10, 8, 14],
+      [30, -6, 10, 7, 16],
+    ];
+    for (const [x, z, w, h, d] of buildings) k.building(x, z, w, h, d);
 
-  // doodle trees / scribbly bushes
-  for (const [x, z] of [
-    [-32, 28],
-    [32, -28],
-    [-28, -32],
-    [28, 32],
-  ] as [number, number][]) {
-    box(x, 0, z, 0.35, 2.2, 0.35, { ink: INK.BLACK, noShoot: true });
-    addMesh(new THREE.SphereGeometry(1.3, 8, 6), night ? INK.BLACK : INK.GREEN, x, 3.1, z);
-  }
+    const cover: Array<[number, number, number, number, number]> = [
+      [-6, 6, 4, 1.2, 1.1],
+      [7, -4, 5, 1.1, 1.2],
+      [2, 12, 3.5, 1.3, 1.1],
+      [-12, -8, 4, 1.2, 1.4],
+      [14, 8, 3.2, 1.15, 1.2],
+      [-16, 10, 2.8, 1.4, 1.1],
+      [10, -14, 4.4, 1.2, 1.3],
+      [0, -10, 6, 0.9, 1.0],
+      [-4, 18, 3, 1.2, 1.1],
+      [18, 2, 2.5, 1.5, 1.2],
+    ];
+    for (const [x, z, w, h, d] of cover) k.box(x, 0, z, w, h, d);
+
+    for (const [x, z] of [
+      [-10, 2],
+      [-9.1, 2.2],
+      [12, -8],
+      [12.9, -7.4],
+      [4, 6],
+      [-18, -12],
+      [16, 14],
+      [-2, -16],
+      [8, 10],
+      [-14, 16],
+    ] as [number, number][])
+      k.crate(x, z);
+
+    for (const [x, z, rot] of [
+      [-4, -18, 0.4],
+      [15, -2, 1.2],
+      [-20, 8, -0.5],
+      [6, 16, 2.1],
+    ] as [number, number, number][])
+      k.car(x, z, rot);
+
+    k.stairs(-14, -18, 1, "z", 10);
+    k.deck(-14, 3.2, -12.4, 6, 4, k.inkWall);
+    k.stairs(18, 12, -1, "x", 9);
+    k.deck(13.2, 2.88, 12, 4, 5, k.inkWall);
+
+    // plaza fountain
+    const fountain = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.6, 10), k.mat(k.inkAccent));
+    fountain.position.set(0, 0.3, 0);
+    k.add(fountain);
+    k.world.addBox(0, 0, 0, 4.6, 0.6, 4.6);
+    const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 1.6, 6), k.mat(k.inkWall));
+    spout.position.set(0, 1.3, 0);
+    k.add(spout);
+    const bowl = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 6), k.mat(k.night ? INK.RED : INK.BLUE, true));
+    bowl.position.set(0, 2.1, 0);
+    k.add(bowl);
+
+    for (const [x, z] of [
+      [-10, -10],
+      [10, 10],
+      [-10, 10],
+      [10, -10],
+      [0, 22],
+      [0, -22],
+    ] as [number, number][])
+      k.lamp(x, z);
+
+    for (const [x, z] of [
+      [-22, -8],
+      [22, 10],
+      [-6, 24],
+    ] as [number, number][])
+      k.box(x, 0, z, 2.2, 1.4, 1.2, { ink: k.night ? INK.GREEN : INK.BLACK });
+
+    for (const [x, z, w, d] of [
+      [-36, -12, 1.4, 6],
+      [36, 14, 1.4, 6],
+      [-12, -36, 6, 1.4],
+      [10, 36, 6, 1.4],
+    ] as [number, number, number, number][]) {
+      k.deck(x, 6, z, w, d);
+      k.deck(x, 3.2, z, w, d);
+    }
+
+    for (const [x, y, z] of [
+      [0, 5, 0],
+      [-16, 4, 4],
+      [14, 3.5, -10],
+    ] as [number, number, number][]) {
+      const t = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.08, 6, 14), k.mat(INK.ORANGE));
+      t.position.set(x, y, z);
+      t.rotation.x = Math.PI / 2;
+      k.add(t);
+    }
+
+    k.planes();
+
+    if (k.night) {
+      for (let i = 0; i < 12; i++) {
+        const g = new THREE.BoxGeometry(rand(0.4, 1.6), 0.08, 0.08);
+        const m = new THREE.Mesh(g, k.mat(INK.RED, true));
+        m.position.set(rand(-30, 30), rand(1.2, 3.5), -37.7);
+        m.rotation.z = rand(-0.4, 0.4);
+        k.add(m);
+      }
+    }
+
+    for (const [x, z] of [
+      [0, 32],
+      [0, -32],
+      [32, 0],
+      [-32, 0],
+      [20, 20],
+      [-20, 20],
+      [20, -20],
+      [-20, -20],
+      [8, -30],
+      [-28, 12],
+      [28, -14],
+      [-12, 30],
+      [14, 30],
+      [-30, -16],
+      [30, 18],
+      [0, 18],
+    ] as [number, number][])
+      k.spawn(x, z);
+
+    k.sniper(-26, 11.2, -26);
+    k.sniper(24, 9.2, -24);
+    k.sniper(-24, 13.2, 22);
+    k.sniper(26, 10.2, 24);
+    k.sniper(-14, 3.6, -12.4);
+
+    k.pickup(4, 0.6, 4);
+    k.pickup(-8, 0.6, 8);
+    k.pickup(12, 0.6, -6);
+
+    for (const [x, z] of [
+      [-32, 28],
+      [32, -28],
+      [-28, -32],
+      [28, 32],
+    ] as [number, number][])
+      k.tree(x, z);
+  },
+};
+
+const rooftops: MapDef = {
+  key: "rooftops",
+  name: "THE ROOFTOPS",
+  blurb: "towers and plank bridges · mind the gap",
+  half: 38,
+  playerStart: [0, 30],
+  build: (k) => {
+    k.arena(38, 20);
+
+    // Four corner towers of equal height so one ring of bridges links them all.
+    // The map reads as hub-and-spokes: spire in the middle, ring around the edge.
+    const TOWER_H = 12;
+    for (const [x, z] of [
+      [-22, -22],
+      [22, -22],
+      [-22, 22],
+      [22, 22],
+    ] as [number, number][]) {
+      k.building(x, z, 13, TOWER_H, 13);
+      for (const [ox, oz, pw, pd] of [
+        [0, -6.5, 13, 0.4],
+        [0, 6.5, 13, 0.4],
+        [-6.5, 0, 0.4, 13],
+        [6.5, 0, 0.4, 13],
+      ] as [number, number, number, number][])
+        k.box(x + ox, TOWER_H + 0.35, z + oz, pw, 1.1, pd, { ink: k.inkAccent });
+    }
+
+    // ring of plank bridges joining the four roofs
+    k.deck(0, TOWER_H, -22, 31, 3.2, k.inkWall);
+    k.deck(0, TOWER_H, 22, 31, 3.2, k.inkWall);
+    k.deck(-22, TOWER_H, 0, 3.2, 31, k.inkWall);
+    k.deck(22, TOWER_H, 0, 3.2, 31, k.inkWall);
+
+    // central spire — the thing you see from anywhere, and the fight everyone wants
+    k.box(0, 0, 0, 9, 6, 9, { ink: k.inkWall });
+    k.deck(0, 6, 0, 10, 10, k.inkAccent);
+    for (const [ox, oz, pw, pd] of [
+      [0, -5, 10, 0.4],
+      [0, 5, 10, 0.4],
+      [-5, 0, 0.4, 10],
+      [5, 0, 0.4, 10],
+    ] as [number, number, number, number][])
+      k.box(ox, 6.3, oz, pw, 0.9, pd, { ink: k.inkWall });
+    k.box(0, 6, 0, 3, 10, 3, { ink: k.inkAccent });
+
+    // decks spiralling the shaft, spaced under a jump height apart
+    const ring: [number, number][] = [
+      [3.2, 0],
+      [0, 3.2],
+      [-3.2, 0],
+      [0, -3.2],
+    ];
+    for (let i = 0; i < 6; i++) {
+      const [ox, oz] = ring[i % 4];
+      k.deck(ox, 7.4 + i * 1.4, oz, 2.8, 2.8, k.inkAccent);
+    }
+    k.deck(0, 15.8, 0, 5.5, 5.5, k.inkAccent);
+
+    // stairs: ground to the spire deck, and two long runs up to the bridge ring
+    k.stairs(0, -14, 1, "z", 15, 0.4, 0.5, 3);
+    k.deck(0, 5.9, -5.6, 3, 2.6, k.inkWall);
+    k.stairs(-30, -8, 1, "z", 24, 0.5, 0.55, 3);
+    k.deck(-26, TOWER_H, 5.2, 8.5, 3.2, k.inkWall);
+    k.stairs(30, 8, -1, "z", 24, 0.5, 0.55, 3);
+    k.deck(26, TOWER_H, -5.2, 8.5, 3.2, k.inkWall);
+
+    // street-level cover so the ground floor is not a bare plane
+    for (const [x, z, w, d] of [
+      [-12, -6, 6, 1.3],
+      [12, 6, 6, 1.3],
+      [-6, 12, 1.3, 6],
+      [6, -12, 1.3, 6],
+      [-16, 14, 4, 1.3],
+      [16, -14, 4, 1.3],
+    ] as [number, number, number, number][])
+      k.box(x, 0, z, w, 1.35, d, { ink: k.inkWall });
+    for (const [x, z] of [
+      [-9, -9],
+      [9, 9],
+      [-9, 9],
+      [9, -9],
+      [0, 17],
+      [0, -17],
+      [17, 0],
+      [-17, 0],
+    ] as [number, number][])
+      k.crate(x, z, rand(0.9, 1.25));
+    for (const [x, z, rot] of [
+      [-14, 26, 0.3],
+      [14, -26, 1.9],
+    ] as [number, number, number][])
+      k.car(x, z, rot);
+
+    for (const [x, z] of [
+      [-30, 0],
+      [30, 0],
+      [0, -32],
+      [0, 32],
+    ] as [number, number][])
+      k.lamp(x, z, 5.2);
+
+    k.planes(5, 26);
+
+    for (const [x, z] of [
+      [0, 32],
+      [0, -32],
+      [32, 0],
+      [-32, 0],
+      [-30, -30],
+      [30, 30],
+      [30, -30],
+      [-30, 30],
+      [-14, 8],
+      [14, -8],
+      [-8, -20],
+      [8, 20],
+    ] as [number, number][])
+      k.spawn(x, z);
+
+    k.sniper(0, 16.1, 0);
+    k.sniper(-22, TOWER_H + 0.4, -22);
+    k.sniper(22, TOWER_H + 0.4, -22);
+    k.sniper(-22, TOWER_H + 0.4, 22);
+    k.sniper(22, TOWER_H + 0.4, 22);
+    k.sniper(0, 6.4, 0);
+
+    k.pickup(0, 6.6, 0);
+    k.pickup(0, 16.2, 0);
+    k.pickup(-22, TOWER_H + 0.5, 0);
+    k.pickup(22, TOWER_H + 0.5, 0);
+  },
+};
+
+const schoolyard: MapDef = {
+  key: "schoolyard",
+  name: "THE SCHOOLYARD",
+  blurb: "open tarmac · climbing frames and long sightlines",
+  half: 36,
+  playerStart: [0, 26],
+  build: (k) => {
+    k.arena(36, 9);
+
+    // the school block along one edge, with a covered walkway
+    k.building(0, -28, 34, 9, 10);
+    k.deck(0, 4.2, -20, 32, 3);
+    for (let i = -14; i <= 14; i += 7) k.box(i, 0, -20, 0.5, 4.2, 0.5, { ink: INK.BLACK, noShoot: true });
+    k.stairs(-17, -18, 1, "x", 11, 0.38, 0.5, 3);
+
+    // climbing frame: an open lattice you can shoot through and stand on
+    const frame = (cx: number, cz: number) => {
+      for (const ox of [-3, 3])
+        for (const oz of [-3, 3]) k.box(cx + ox, 0, cz + oz, 0.4, 4.2, 0.4, { ink: k.inkAccent });
+      k.deck(cx, 2.1, cz, 6.8, 0.5, k.inkAccent);
+      k.deck(cx, 2.1, cz, 0.5, 6.8, k.inkAccent);
+      k.deck(cx, 4.2, cz, 7.2, 7.2, k.inkAccent);
+      k.spawn(cx, cz + 6);
+    };
+    frame(-16, 6);
+    frame(16, 6);
+
+    // sandbox pit and benches
+    for (const [x, z, w, d] of [
+      [0, 14, 9, 9],
+      [-22, -6, 6, 6],
+      [22, -6, 6, 6],
+    ] as [number, number, number, number][]) {
+      for (const [ox, oz, bw, bd] of [
+        [0, -d / 2, w, 0.6],
+        [0, d / 2, w, 0.6],
+        [-w / 2, 0, 0.6, d],
+        [w / 2, 0, 0.6, d],
+      ] as [number, number, number, number][])
+        k.box(x + ox, 0, z + oz, bw, 0.7, bd, { ink: k.night ? INK.RED : INK.ORANGE });
+    }
+    for (const [x, z, rot] of [
+      [-8, 22, 0],
+      [8, 22, 0],
+      [-26, 14, 1.57],
+      [26, 14, 1.57],
+    ] as [number, number, number][]) {
+      const g = new THREE.Group();
+      g.position.set(x, 0, z);
+      g.rotation.y = rot;
+      const seat = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.25, 0.9), k.mat(k.inkWall));
+      seat.position.y = 0.9;
+      g.add(seat);
+      const back = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.9, 0.2), k.mat(k.inkWall));
+      back.position.set(0, 1.5, -0.35);
+      g.add(back);
+      k.add(g);
+      k.world.addBox(x, 0, z, rot ? 1.1 : 3.4, 1.9, rot ? 3.4 : 1.1);
+    }
+
+    // basketball hoops as tall landmarks
+    for (const [x, z, s] of [
+      [-28, 24, 1],
+      [28, 24, -1],
+    ] as [number, number, number][]) {
+      k.box(x, 0, z, 0.35, 5.2, 0.35, { ink: INK.BLACK, noShoot: true });
+      k.box(x + s * 0.7, 4.4, z, 1.6, 1.2, 0.15, { ink: k.inkAccent, noCollide: true });
+      const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.06, 6, 14), k.mat(INK.ORANGE));
+      hoop.position.set(x + s * 1.3, 4.3, z);
+      hoop.rotation.x = Math.PI / 2;
+      k.add(hoop);
+    }
+
+    // scattered low cover so the open tarmac is survivable
+    for (const [x, z, w, d] of [
+      [-6, 0, 5, 1.2],
+      [6, 0, 5, 1.2],
+      [0, -8, 1.2, 5],
+      [-14, -12, 4, 1.2],
+      [14, -12, 4, 1.2],
+      [-8, 30, 4.5, 1.2],
+      [8, 30, 4.5, 1.2],
+    ] as [number, number, number, number][])
+      k.box(x, 0, z, w, 1.25, d, { ink: k.inkWall });
+
+    for (const [x, z] of [
+      [-30, -18],
+      [30, -18],
+      [-30, 30],
+      [30, 30],
+    ] as [number, number][])
+      k.tree(x, z);
+    for (const [x, z] of [
+      [-12, 8],
+      [12, 8],
+      [0, -14],
+    ] as [number, number][])
+      k.crate(x, z, 1.2);
+
+    k.planes(3, 20);
+
+    for (const [x, z] of [
+      [0, 30],
+      [-28, 0],
+      [28, 0],
+      [-28, -22],
+      [28, -22],
+      [0, 4],
+      [-18, 26],
+      [18, 26],
+      [-10, -14],
+      [10, -14],
+      [0, 20],
+    ] as [number, number][])
+      k.spawn(x, z);
+
+    k.sniper(0, 9.4, -28);
+    k.sniper(-16, 4.6, 6);
+    k.sniper(16, 4.6, 6);
+    k.sniper(0, 4.6, -20);
+
+    k.pickup(0, 0.6, 14);
+    k.pickup(-22, 0.6, -6);
+    k.pickup(22, 0.6, -6);
+  },
+};
+
+const subway: MapDef = {
+  key: "subway",
+  name: "THE UNDERLINE",
+  blurb: "platforms and pillars · nowhere to run",
+  half: 34,
+  playerStart: [0, 26],
+  build: (k) => {
+    k.arena(34, 12);
+
+    // ceiling slab makes it read as underground and blocks the sky
+    k.box(0, 9, 0, 70, 1, 70, { ink: k.inkWall, noShoot: true });
+
+    // the track trench down the middle, with two raised platforms either side
+    k.box(0, -0.6, 0, 12, 0.4, 62, { ink: INK.BLACK, fill: k.night });
+    for (const s of [-1, 1]) {
+      k.box(s * 13.5, 0, 0, 15, 1.2, 62, { ink: k.inkWall });
+      // platform edge stripe
+      k.box(s * 6.6, 1.2, 0, 0.6, 0.12, 62, { ink: k.inkAccent, noCollide: true });
+      // pillar rows
+      for (let z = -26; z <= 26; z += 6.5) k.box(s * 13.5, 1.2, z, 1.1, 6.6, 1.1, { ink: k.inkAccent });
+      // benches / vending along the back wall
+      for (let z = -22; z <= 22; z += 11) k.box(s * 19.5, 1.2, z, 1.4, 1.5, 3.2, { ink: k.inkWall });
+    }
+
+    // rails
+    for (const x of [-3.2, 3.2]) k.box(x, -0.6, 0, 0.28, 0.24, 62, { ink: k.inkAccent, noCollide: true });
+
+    // three stopped carriages in the trench — cover, and a route between platforms
+    for (const cz of [-20, 0, 20]) {
+      k.box(0, -0.2, cz, 9, 3.4, 13, { ink: k.night ? INK.RED : INK.BLUE });
+      k.deck(0, 3.2, cz, 9.4, 13.4, k.inkAccent);
+      for (const s of [-1, 1])
+        for (const oz of [-4, 0, 4])
+          k.box(s * 4.6, 1.0, cz + oz, 0.12, 1.4, 2.4, {
+            ink: k.night ? INK.BLACK : INK.BLACK,
+            noCollide: true,
+            fill: true,
+          });
+    }
+
+    // ramps from platform up onto the carriage roofs
+    for (const s of [-1, 1]) {
+      k.stairs(s * 7.6, -28, 1, "z", 7, 0.32, 0.55, 2.4);
+      k.stairs(s * 7.6, 28, -1, "z", 7, 0.32, 0.55, 2.4);
+    }
+
+    // mezzanine stairwells at both ends
+    for (const s of [-1, 1]) {
+      k.stairs(s * 26, -12, 1, "z", 12, 0.4, 0.5, 3.4);
+      k.deck(s * 26, 4.8, -2, 7, 12, k.inkWall);
+      k.box(s * 26, 4.8, 4.2, 7, 1.0, 0.4, { ink: k.inkAccent });
+    }
+
+    for (let z = -28; z <= 28; z += 9)
+      for (const s of [-1, 1]) k.lamp(s * 19, z, 3.2);
+
+    for (const [x, z] of [
+      [0, 30],
+      [0, -30],
+      [-13, 28],
+      [13, 28],
+      [-13, -28],
+      [13, -28],
+      [-20, 10],
+      [20, 10],
+      [-20, -10],
+      [20, -10],
+      [-26, 0],
+      [26, 0],
+    ] as [number, number][])
+      k.spawn(x, z);
+
+    k.sniper(-26, 5.2, -2);
+    k.sniper(26, 5.2, -2);
+    k.sniper(0, 3.6, 0);
+    k.sniper(0, 3.6, 20);
+
+    k.pickup(0, 3.8, 0);
+    k.pickup(-13.5, 1.8, 14);
+    k.pickup(13.5, 1.8, -14);
+  },
+};
+
+const sketchpad: MapDef = {
+  key: "sketchpad",
+  name: "THE SKETCHPAD",
+  blurb: "floating paper · all jump, no floor plan",
+  half: 34,
+  playerStart: [0, 26],
+  build: (k) => {
+    k.arena(34, 26);
+
+    // a low ground exists so a missed jump costs tempo, not the run
+    // slabs climb in three tiers around a tall centre island
+    const slab = (x: number, y: number, z: number, w: number, d: number, ink = k.inkWall) => {
+      k.box(x, y, z, w, 0.5, d, { ink });
+      k.box(x, y + 0.5, z, w + 0.3, 0.18, d + 0.3, { ink: k.inkAccent, noCollide: true });
+    };
+
+    // tier 1
+    slab(-16, 2.4, -16, 9, 9);
+    slab(16, 2.4, -16, 9, 9);
+    slab(-16, 2.4, 16, 9, 9);
+    slab(16, 2.4, 16, 9, 9);
+    // tier 2
+    slab(0, 5.2, -20, 11, 7);
+    slab(0, 5.2, 20, 11, 7);
+    slab(-20, 5.2, 0, 7, 11);
+    slab(20, 5.2, 0, 7, 11);
+    // tier 3 — centre island, the contested ground
+    slab(0, 8.6, 0, 13, 13, k.inkAccent);
+    for (const [ox, oz, w, d] of [
+      [0, -6.5, 13, 0.4],
+      [0, 6.5, 13, 0.4],
+      [-6.5, 0, 0.4, 13],
+      [6.5, 0, 0.4, 13],
+    ] as [number, number, number, number][])
+      k.box(ox, 9.1, oz, w, 0.9, d, { ink: k.inkWall });
+
+    // stepping stones bridging the tiers, small enough to demand a real jump
+    for (const [x, y, z] of [
+      [-8, 3.8, -8],
+      [8, 3.8, -8],
+      [-8, 3.8, 8],
+      [8, 3.8, 8],
+      [-5, 7.0, -13],
+      [5, 7.0, 13],
+      [-13, 7.0, 5],
+      [13, 7.0, -5],
+      [-4, 6.4, -4],
+      [4, 6.4, 4],
+    ] as [number, number, number][])
+      slab(x, y, z, 3.4, 3.4);
+
+    // ramps up from the floor so a death is recoverable without a jump puzzle
+    k.stairs(-26, -6, 1, "z", 8, 0.32, 0.55, 3);
+    k.stairs(26, 6, -1, "z", 8, 0.32, 0.55, 3);
+    slab(-26, 2.4, 0, 5, 6);
+    slab(26, 2.4, 0, 5, 6);
+
+    // pencils standing in the void as landmarks / partial cover
+    for (const [x, z, h] of [
+      [-11, 0, 9],
+      [11, 0, 9],
+      [0, -11, 7],
+      [0, 11, 7],
+    ] as [number, number, number][]) {
+      k.box(x, 0, z, 0.7, h, 0.7, { ink: k.night ? INK.RED : INK.ORANGE });
+      const tip = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.2, 6), k.mat(INK.BLACK, true));
+      tip.position.set(x, h + 0.6, z);
+      k.add(tip);
+    }
+
+    // drifting eraser crumbs
+    for (let i = 0; i < 5; i++) {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.5), k.mat(k.inkAccent));
+      k.add(m);
+      const r = 12 + i * 4;
+      const y = 4 + i * 1.5;
+      const sp = 0.18 + i * 0.03;
+      k.float(m, (t) => {
+        m.position.set(Math.cos(t * sp + i) * r, y + Math.sin(t * 1.3 + i) * 0.8, Math.sin(t * sp + i) * r);
+        m.rotation.y = t * 0.6;
+      });
+    }
+
+    k.planes(4, 26);
+
+    for (const [x, z] of [
+      [0, 30],
+      [0, -30],
+      [30, 0],
+      [-30, 0],
+      [-26, -26],
+      [26, 26],
+      [26, -26],
+      [-26, 26],
+      [-16, -16],
+      [16, 16],
+    ] as [number, number][])
+      k.spawn(x, z);
+
+    k.sniper(0, 9.3, 0);
+    k.sniper(-20, 5.9, 0);
+    k.sniper(20, 5.9, 0);
+    k.sniper(0, 5.9, -20);
+    k.sniper(0, 5.9, 20);
+
+    k.pickup(0, 9.5, 0);
+    k.pickup(-16, 3.2, -16);
+    k.pickup(16, 3.2, 16);
+  },
+};
+
+const bazaar: MapDef = {
+  key: "bazaar",
+  name: "THE BAZAAR",
+  blurb: "stall alleys and awnings · knife-fight close",
+  half: 32,
+  playerStart: [0, 24],
+  build: (k) => {
+    k.arena(32, 14);
+
+    // a grid of market stalls: solid counter, walkable awning above
+    const stall = (x: number, z: number, rot: 0 | 1) => {
+      const w = rot ? 3.2 : 6.4;
+      const d = rot ? 6.4 : 3.2;
+      k.box(x, 0, z, w, 1.35, d, { ink: k.inkWall });
+      for (const [ox, oz] of [
+        [-w / 2 + 0.3, -d / 2 + 0.3],
+        [w / 2 - 0.3, -d / 2 + 0.3],
+        [-w / 2 + 0.3, d / 2 - 0.3],
+        [w / 2 - 0.3, d / 2 - 0.3],
+      ] as [number, number][])
+        k.box(x + ox, 1.35, z + oz, 0.28, 1.9, 0.28, { ink: INK.BLACK, noShoot: true });
+      k.deck(x, 3.25, z, w + 0.8, d + 0.8, k.inkAccent);
+      // hanging cloth
+      k.box(x, 1.5, z + (rot ? 0 : d / 2), rot ? 0.12 : w * 0.8, 1.0, rot ? d * 0.8 : 0.12, {
+        ink: k.night ? INK.RED : INK.ORANGE,
+        noCollide: true,
+        fill: true,
+      });
+    };
+
+    for (const [x, z, r] of [
+      [-18, -14, 0],
+      [-6, -14, 0],
+      [6, -14, 0],
+      [18, -14, 0],
+      [-18, 14, 0],
+      [-6, 14, 0],
+      [6, 14, 0],
+      [18, 14, 0],
+      [-22, 0, 1],
+      [-10, 2, 1],
+      [10, -2, 1],
+      [22, 0, 1],
+    ] as [number, number, 0 | 1][])
+      stall(x, z, r);
+
+    // central plaza with a well, the one open sightline
+    const well = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 1.4, 12), k.mat(k.inkAccent));
+    well.position.set(0, 0.7, 0);
+    k.add(well);
+    k.world.addBox(0, 0, 0, 5, 1.4, 5);
+    for (const s of [-1, 1]) k.box(s * 2.2, 1.4, 0, 0.3, 3, 0.3, { ink: INK.BLACK, noShoot: true });
+    k.box(0, 4.4, 0, 5.4, 0.4, 1.6, { ink: k.inkWall, noCollide: true });
+
+    // crate piles filling the alleys
+    for (const [x, z] of [
+      [-13, -6],
+      [-12.2, -5.4],
+      [13, 6],
+      [12.4, 6.6],
+      [-2, -22],
+      [2, 22],
+      [-26, -24],
+      [26, 24],
+      [0, -8],
+      [0, 8],
+      [-24, 20],
+      [24, -20],
+    ] as [number, number][])
+      k.crate(x, z, rand(0.9, 1.3));
+
+    for (const [x, z] of [
+      [-14, -24],
+      [14, -24],
+      [-14, 24],
+      [14, 24],
+    ] as [number, number][])
+      k.barrel(x, z);
+
+    // a raised terrace along one wall, reached by stairs at both ends
+    k.deck(0, 4.6, -27, 56, 6, k.inkWall);
+    k.box(0, 4.6, -24.2, 56, 1.0, 0.4, { ink: k.inkAccent });
+    k.stairs(-27, -22, -1, "z", 13, 0.36, 0.5, 3.2);
+    k.stairs(27, -22, -1, "z", 13, 0.36, 0.5, 3.2);
+
+    for (const [x, z] of [
+      [-9, 0],
+      [9, 0],
+      [0, -18],
+      [0, 18],
+    ] as [number, number][])
+      k.lamp(x, z, 3.8);
+
+    k.planes(3, 18);
+
+    for (const [x, z] of [
+      [0, 28],
+      [0, -20],
+      [28, 0],
+      [-28, 0],
+      [-26, 26],
+      [26, 26],
+      [-26, -8],
+      [26, -8],
+      [0, 6],
+      [-16, 20],
+      [16, 20],
+      [0, -10],
+    ] as [number, number][])
+      k.spawn(x, z);
+
+    k.sniper(0, 5.0, -27);
+    k.sniper(-18, 3.5, -14);
+    k.sniper(18, 3.5, 14);
+    k.sniper(-22, 3.5, 0);
+    k.sniper(22, 3.5, 0);
+
+    k.pickup(0, 0.6, 0);
+    k.pickup(-13, 0.6, -6);
+    k.pickup(13, 0.6, 6);
+  },
+};
+
+export const MAPS: MapDef[] = [district, rooftops, schoolyard, subway, sketchpad, bazaar];
+export const DEFAULT_MAP = district.key;
+
+export function getMap(key: string): MapDef {
+  return MAPS.find((m) => m.key === key) ?? district;
+}
+
+export function buildLevel(scene: THREE.Scene, world: World, mode: Mode, mapKey: string = DEFAULT_MAP): Level {
+  const def = getMap(mapKey);
+  const k = new MapKit(scene, world, mode === "zombies");
+  def.build(k);
+
+  // ground heights are only valid once every collider exists
+  const spawns = k.rawSpawns.map(([x, z]) => new THREE.Vector3(x, world.groundY(x, z) + 0.05, z));
+  const [px, pz] = def.playerStart;
 
   return {
-    meshes,
-    animated,
+    key: def.key,
+    meshes: k.meshes,
+    animated: k.animated,
     spawns,
-    snipers,
-    pickups,
-    playerStart: new THREE.Vector3(0, 0, 28),
+    snipers: k.snipers,
+    pickups: k.pickups,
+    playerStart: new THREE.Vector3(px, world.groundY(px, pz) + 0.05, pz),
     bounds: world.bounds,
   };
 }

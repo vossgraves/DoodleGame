@@ -464,6 +464,31 @@ canvas.game-canvas {
   }
 }
 
+.map-chip {
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  background: rgba(246, 243, 230, 0.5);
+  color: var(--ink);
+  font-family: inherit;
+  padding: 7px 12px;
+  min-width: 156px;
+  max-width: 210px;
+  text-align: left;
+  cursor: pointer;
+  transform: rotate(-0.5deg);
+}
+.map-chip:nth-child(even) {
+  transform: rotate(0.6deg);
+}
+.map-chip:hover {
+  background: rgba(26, 48, 192, 0.1);
+}
+.map-chip.on {
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(208, 32, 48, 0.1);
+}
+
 .touch-layer {
   position: absolute;
   inset: 0;
