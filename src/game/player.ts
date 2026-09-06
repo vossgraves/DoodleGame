@@ -5,6 +5,7 @@ import { INK, makeInkMaterial } from "./renderer";
 import type { Input } from "./input";
 import type { AudioSys } from "./audio";
 import { applyBuild, type GunBuild, type Gunsmith } from "./attachments";
+import { camoById, charmById, stickerById, type Wardrobe, type WeaponSkin } from "./cosmetics";
 
 export type WeaponKind =
   | "rifle"
@@ -369,7 +370,36 @@ const ANCHORS: Partial<Record<WeaponKind, { muzzle: V3; sight: V3; mag: V3; stoc
   sniper: { muzzle: [0, 0.1, -1.3], sight: [0, 0.26, -0.5], mag: [0, -0.16, -0.06], stock: [0, 0.06, 0.3] },
   revolver: { muzzle: [0, 0.06, -0.54], sight: [0, 0.14, -0.16], mag: [0, 0.0, -0.04], stock: [0, -0.14, 0.16] },
   pistol: { muzzle: [0, 0.05, -0.42], sight: [0, 0.14, -0.1], mag: [0, -0.24, 0.02], stock: [0, 0.06, 0.1] },
+  // the knife takes no rails, but it still hangs a charm and wears a sticker
+  knife: { muzzle: [0, 0.02, -0.5], sight: [0, 0.1, -0.1], mag: [0, -0.1, 0.1], stock: [0, -0.02, 0.2] },
 };
+
+/** Flat sticker shapes, drawn once and stuck on the side of the receiver. */
+function glyphGeo(glyph: "star" | "cross" | "ring" | "bolt" | "blot") {
+  if (glyph === "star") return starGeo(5, 0.16, 0.07);
+  if (glyph === "blot") return new THREE.CircleGeometry(0.13, 9);
+  if (glyph === "ring") return new THREE.RingGeometry(0.08, 0.14, 12);
+  const s = new THREE.Shape();
+  if (glyph === "cross") {
+    const a = 0.045;
+    const b = 0.15;
+    const pts: [number, number][] = [
+      [-a, -b], [a, -b], [a, -a], [b, -a], [b, a], [a, a],
+      [a, b], [-a, b], [-a, a], [-b, a], [-b, -a], [-a, -a],
+    ];
+    s.moveTo(...pts[0]);
+    for (const p of pts.slice(1)) s.lineTo(...p);
+  } else {
+    // lightning bolt
+    const pts: [number, number][] = [
+      [0.02, 0.16], [-0.11, 0.0], [-0.02, 0.0], [-0.05, -0.16], [0.1, 0.02], [0.01, 0.02],
+    ];
+    s.moveTo(...pts[0]);
+    for (const p of pts.slice(1)) s.lineTo(...p);
+  }
+  s.closePath();
+  return new THREE.ShapeGeometry(s);
+}
 
 function starGeo(n = 7, r1 = 0.16, r2 = 0.06) {
   const s = new THREE.Shape();
@@ -405,21 +435,35 @@ export class Weapon {
   /** counts down while the gun is being swung up into view */
   equipT = 0;
   private build_: GunBuild | undefined;
+  private skin: WeaponSkin | undefined;
+  private camo!: ReturnType<typeof camoById>;
+  /** the dangling charm, if one is fitted — swings on its own */
+  private charmPivot: THREE.Object3D | null = null;
+  private charmT = 0;
   private ink: THREE.ShaderMaterial;
   private solid: THREE.ShaderMaterial;
   private orange: THREE.ShaderMaterial;
   private black: THREE.ShaderMaterial;
 
-  constructor(kind: WeaponKind, build?: GunBuild) {
+  constructor(kind: WeaponKind, build?: GunBuild, skin?: WeaponSkin) {
     this.build_ = DEFS[kind].isGun ? build : undefined;
+    this.skin = skin;
     this.def = applyBuild(DEFS[kind], this.build_);
     this.mag = this.def.magSize;
     this.reserve = this.def.reserve;
     this.spreadCur = this.def.spread;
-    this.ink = makeInkMaterial({ ink: INK.BLUE, shadeBias: -0.15 });
-    this.solid = makeInkMaterial({ ink: INK.BLUE, fill: true });
+    // the camo decides which pens the whole gun is drawn with
+    const camo = camoById(skin?.camo);
+    this.camo = camo;
+    this.ink = makeInkMaterial({
+      ink: camo.ink,
+      fill: camo.fill,
+      shadeScale: camo.shadeScale,
+      shadeBias: camo.shadeBias ?? -0.15,
+    });
+    this.solid = makeInkMaterial({ ink: camo.accent, fill: true });
     this.orange = makeInkMaterial({ ink: INK.ORANGE, fill: true, side: THREE.DoubleSide });
-    this.black = makeInkMaterial({ ink: INK.BLACK, shadeBias: -0.1 });
+    this.black = makeInkMaterial({ ink: camo.dark, shadeBias: -0.1 });
     this.root = new THREE.Group();
     this.root.scale.setScalar(0.48);
     this.flash = new THREE.Group();
@@ -514,7 +558,63 @@ export class Weapon {
       this.hand(0.05, -0.08, 0.12);
     }
     this.fitAttachments();
+    this.dress();
     this.root.visible = false;
+  }
+
+  /** Camo bands, a hanging charm and a stuck-on sticker. */
+  private dress() {
+    const anchor = ANCHORS[this.def.kind];
+    if (!anchor) return;
+
+    if (this.camo.bands) {
+      const band = makeInkMaterial({ ink: this.camo.accent, fill: true });
+      const reach = anchor.muzzle[2];
+      for (let i = 0; i < this.camo.bands; i++) {
+        const t = (i + 1) / (this.camo.bands + 1);
+        bx(0.115, 0.115, 0.028, anchor.muzzle[0], anchor.muzzle[1], reach * t, band, this.root);
+      }
+    }
+
+    const charm = charmById(this.skin?.charm);
+    if (charm) {
+      const [sx, sy, sz] = anchor.stock;
+      const pivot = new THREE.Group();
+      pivot.position.set(sx + 0.09, sy - 0.02, sz);
+      const mat = makeInkMaterial({ ink: charm.ink, fill: true });
+      // the cord it hangs on, then the trinket at the bottom of it
+      bx(0.012, 0.13, 0.012, 0, -0.065, 0, mat, pivot);
+      if (charm.shape === "clip") {
+        bx(0.015, 0.1, 0.015, 0, -0.18, 0, mat, pivot);
+        bx(0.05, 0.015, 0.015, 0.018, -0.13, 0, mat, pivot);
+        bx(0.05, 0.015, 0.015, 0.018, -0.23, 0, mat, pivot);
+      } else if (charm.shape === "star") {
+        const s = new THREE.Mesh(starGeo(5, 0.075, 0.032), mat);
+        s.position.y = -0.19;
+        pivot.add(s);
+      } else if (charm.shape === "die") {
+        bx(0.085, 0.085, 0.085, 0, -0.18, 0, mat, pivot);
+      } else if (charm.shape === "blot") {
+        const s = new THREE.Mesh(new THREE.SphereGeometry(0.055, 6, 5), mat);
+        s.position.y = -0.18;
+        pivot.add(s);
+      } else {
+        bx(0.07, 0.1, 0.012, 0, -0.185, 0, mat, pivot);
+      }
+      this.root.add(pivot);
+      this.charmPivot = pivot;
+    }
+
+    const sticker = stickerById(this.skin?.sticker);
+    if (sticker) {
+      const mat = makeInkMaterial({ ink: sticker.ink, fill: true, side: THREE.DoubleSide });
+      const decal = new THREE.Mesh(glyphGeo(sticker.glyph), mat);
+      // flat against the left face of the receiver, facing outwards
+      decal.position.set(-0.088, 0.04, -0.02);
+      decal.rotation.y = -Math.PI / 2;
+      decal.scale.setScalar(0.6);
+      this.root.add(decal);
+    }
   }
 
   /**
@@ -686,6 +786,13 @@ export class Weapon {
       const out = 1 - (1 - p) ** 3;
       this.edge.position.z = BLADE_RETRACT * (1 - out);
     }
+    if (this.charmPivot) {
+      // a slow idle sway, with a jolt every time the gun goes off
+      this.charmT += dt;
+      const jolt = this.fireT > 0 ? this.fireT / Math.max(0.05, this.def.interval) : 0;
+      this.charmPivot.rotation.z = Math.sin(this.charmT * 2.3) * 0.16 + jolt * 0.5;
+      this.charmPivot.rotation.x = Math.sin(this.charmT * 1.7 + 1) * 0.1;
+    }
     if (this.blocking) this.blockT += dt;
     else this.blockT = 0;
   }
@@ -706,6 +813,8 @@ export interface PlayerHooks {
   loadout?: WeaponKind[];
   /** per-weapon gunsmith builds */
   gunsmith?: Gunsmith;
+  /** per-weapon camo, charm and sticker */
+  wardrobe?: Wardrobe;
 }
 
 const G = 26;
@@ -774,12 +883,16 @@ export class Player {
   private adsOn = false;
   private adsBlend = 0;
   private gunsmith: Gunsmith = {};
+  private wardrobe: Wardrobe = {};
   private lastGround = true;
 
   constructor(hooks: PlayerHooks) {
     this.hooks = hooks;
     this.gunsmith = hooks.gunsmith ?? {};
-    this.weapons = sanitizeLoadout(hooks.loadout ?? DEFAULT_LOADOUT).map((k) => new Weapon(k, this.gunsmith[k]));
+    this.wardrobe = hooks.wardrobe ?? {};
+    this.weapons = sanitizeLoadout(hooks.loadout ?? DEFAULT_LOADOUT).map(
+      (k) => new Weapon(k, this.gunsmith[k], this.wardrobe[k]),
+    );
     this.weapon = this.weapons[0];
     this.weapon.equip();
     hooks.camera.add(this.rig);
@@ -844,15 +957,18 @@ export class Player {
       w.root.traverse((o) => {
         const m = o as THREE.Mesh;
         if (m.geometry) m.geometry.dispose();
+        // each weapon builds its own materials off its camo, so those go too
+        if (m.material) (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x.dispose());
       });
     }
   }
 
   /** Swap the whole kit — used by the brief window after a respawn. */
-  setLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith) {
+  setLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith, wardrobe?: Wardrobe) {
     this.clearWeapons();
     if (gunsmith) this.gunsmith = gunsmith;
-    this.weapons = sanitizeLoadout(kinds).map((k) => new Weapon(k, this.gunsmith[k]));
+    if (wardrobe) this.wardrobe = wardrobe;
+    this.weapons = sanitizeLoadout(kinds).map((k) => new Weapon(k, this.gunsmith[k], this.wardrobe[k]));
     for (const w of this.weapons) this.rig.add(w.root);
     this.weaponIndex = 0;
     this.weapon = this.weapons[0];
@@ -883,10 +999,12 @@ export class Player {
     old.root.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
+      // each weapon builds its own materials off its camo, so those go too
+      if (m.material) (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x.dispose());
     });
 
     // a gun off the ground still gets your build for it — the parts are yours
-    const fresh = new Weapon(kind, this.gunsmith[kind]);
+    const fresh = new Weapon(kind, this.gunsmith[kind], this.wardrobe[kind]);
     this.weapons[slot] = fresh;
     this.rig.add(fresh.root);
     if (this.weaponIndex === slot) {

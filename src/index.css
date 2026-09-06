@@ -1220,3 +1220,18 @@ input[type="range"].ink-range::-webkit-slider-thumb {
 .att-chip .mods i.down {
   color: var(--red);
 }
+
+.gs-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.att-chip.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+.att-chip.locked:hover {
+  background: rgba(246, 243, 230, 0.6);
+}

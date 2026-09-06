@@ -11,6 +11,18 @@ import {
   type GunBuild,
   type Gunsmith,
 } from "./game/attachments";
+import {
+  CAMOS,
+  CHARMS,
+  STICKERS,
+  enforceUnlocks,
+  nextCamo,
+  sanitizeKills,
+  sanitizeWardrobe,
+  type KillLog,
+  type Wardrobe,
+  type WeaponSkin,
+} from "./game/cosmetics";
 import { SCORE_TARGET, type MatchMode, type MatchNet } from "./game/match";
 import type { BotSkill } from "./game/bot";
 import { WeaponIcon } from "./WeaponIcon";
@@ -48,6 +60,22 @@ function loadLoadout(): WeaponKind[] {
 function loadGunsmith(): Gunsmith {
   try {
     return sanitizeGunsmith(JSON.parse(localStorage.getItem("doodle_gunsmith") || "null"));
+  } catch {
+    return {};
+  }
+}
+
+function loadKills(): KillLog {
+  try {
+    return sanitizeKills(JSON.parse(localStorage.getItem("doodle_wkills") || "null"));
+  } catch {
+    return {};
+  }
+}
+
+function loadWardrobe(kills: KillLog): Wardrobe {
+  try {
+    return enforceUnlocks(sanitizeWardrobe(JSON.parse(localStorage.getItem("doodle_skins") || "null")), kills);
   } catch {
     return {};
   }
@@ -131,6 +159,8 @@ export default function App() {
   const [mapKey, setMapKey] = useState(() => localStorage.getItem("doodle_map") || DEFAULT_MAP);
   const [loadout, setLoadout] = useState<WeaponKind[]>(loadLoadout);
   const [gunsmith, setGunsmith] = useState<Gunsmith>(loadGunsmith);
+  const [weaponKills, setWeaponKills] = useState<KillLog>(loadKills);
+  const [wardrobe, setWardrobe] = useState<Wardrobe>(() => loadWardrobe(loadKills()));
   const [playerName, setPlayerName] = useState(() => localStorage.getItem("doodle_name") || "");
   const [matchMode, setMatchMode] = useState<MatchMode>("ffa");
   // MatchNet lives outside React; bump this to re-read it
@@ -164,6 +194,10 @@ export default function App() {
   loadoutRef.current = loadout;
   const gunsmithRef = useRef(gunsmith);
   gunsmithRef.current = gunsmith;
+  const wardrobeRef = useRef(wardrobe);
+  wardrobeRef.current = wardrobe;
+  const killsRef = useRef(weaponKills);
+  killsRef.current = weaponKills;
 
   useEffect(() => {
     setTouch(isTouchDevice());
@@ -219,14 +253,34 @@ export default function App() {
       if (Array.isArray(r.profile?.loadout) && r.profile.loadout.length) {
         setLoadout(sanitizeLoadout(r.profile.loadout));
       }
-      const saved = sanitizeGunsmith((r.profile?.settings as { gunsmith?: unknown })?.gunsmith);
+      const st = r.profile?.settings as { gunsmith?: unknown; skins?: unknown; wkills?: unknown } | undefined;
+      const saved = sanitizeGunsmith(st?.gunsmith);
       if (Object.keys(saved).length) setGunsmith(saved);
+      const log = sanitizeKills(st?.wkills);
+      if (Object.keys(log).length) {
+        setWeaponKills(log);
+        localStorage.setItem("doodle_wkills", JSON.stringify(log));
+      }
+      const worn = enforceUnlocks(sanitizeWardrobe(st?.skins), log);
+      if (Object.keys(worn).length) setWardrobe(worn);
       if (!localStorage.getItem("doodle_name")) setPlayerName(r.user.username);
     });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // Weapon kills accumulate through a match; push them to the profile once, on
+  // the way out. Saving per kill would be one API call every second or two.
+  useEffect(() => {
+    if (screen === "game") return;
+    if (!Object.keys(killsRef.current).length) return;
+    account.saveProfileSoon(loadoutRef.current, {
+      gunsmith: gunsmithRef.current,
+      skins: wardrobeRef.current,
+      wkills: killsRef.current,
+    });
+  }, [screen]);
 
   const killGame = useCallback(() => {
     gameRef.current?.dispose();
@@ -245,7 +299,14 @@ export default function App() {
     if (screen !== "game") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas, mode, mapKey, loadoutRef.current, gunsmithRef.current);
+    const g = new Game(canvas, mode, mapKey, loadoutRef.current, gunsmithRef.current, wardrobeRef.current);
+    g.onWeaponKill = (k) => {
+      setWeaponKills((prev) => {
+        const next = { ...prev, [k]: (prev[k] ?? 0) + 1 };
+        localStorage.setItem("doodle_wkills", JSON.stringify(next));
+        return next;
+      });
+    };
     gameRef.current = g;
     g.onHud = (h) => {
       hudLatest.current = h;
@@ -326,8 +387,13 @@ export default function App() {
             setMe(user);
             setStats(s);
             if (profile?.loadout?.length) setLoadout(sanitizeLoadout(profile.loadout));
-            const kits = sanitizeGunsmith((profile?.settings as { gunsmith?: unknown })?.gunsmith);
+            const st = profile?.settings as { gunsmith?: unknown; skins?: unknown; wkills?: unknown } | undefined;
+            const kits = sanitizeGunsmith(st?.gunsmith);
             if (Object.keys(kits).length) setGunsmith(kits);
+            const log = sanitizeKills(st?.wkills);
+            if (Object.keys(log).length) setWeaponKills(log);
+            const worn = enforceUnlocks(sanitizeWardrobe(st?.skins), log);
+            if (Object.keys(worn).length) setWardrobe(worn);
             if (!localStorage.getItem("doodle_name")) {
               setPlayerName(user.username);
               localStorage.setItem("doodle_name", user.username);
@@ -344,16 +410,23 @@ export default function App() {
         <LoadoutScreen
           loadout={loadout}
           gunsmith={gunsmith}
+          wardrobe={wardrobe}
+          weaponKills={weaponKills}
           onChange={(l) => {
             setLoadout(l);
             localStorage.setItem("doodle_loadout", JSON.stringify(l));
             // coalesced: tapping through chips must not be one API call each
-            account.saveProfileSoon(l, { gunsmith });
+            account.saveProfileSoon(l, { gunsmith, skins: wardrobe, wkills: weaponKills });
           }}
           onGunsmith={(g) => {
             setGunsmith(g);
             localStorage.setItem("doodle_gunsmith", JSON.stringify(g));
-            account.saveProfileSoon(loadout, { gunsmith: g });
+            account.saveProfileSoon(loadout, { gunsmith: g, skins: wardrobe, wkills: weaponKills });
+          }}
+          onWardrobe={(w) => {
+            setWardrobe(w);
+            localStorage.setItem("doodle_skins", JSON.stringify(w));
+            account.saveProfileSoon(loadout, { gunsmith, skins: w, wkills: weaponKills });
           }}
           onBack={() => {
             account.flushProfile();
@@ -436,17 +509,25 @@ export default function App() {
               <LoadoutScreen
                 loadout={loadout}
                 gunsmith={gunsmith}
+                wardrobe={wardrobe}
+                weaponKills={weaponKills}
                 onChange={(l) => {
                   setLoadout(l);
                   localStorage.setItem("doodle_loadout", JSON.stringify(l));
-                  account.saveProfileSoon(l, { gunsmith });
-                  gameRef.current?.applyLoadout(l, gunsmith);
+                  account.saveProfileSoon(l, { gunsmith, skins: wardrobe, wkills: weaponKills });
+                  gameRef.current?.applyLoadout(l, gunsmith, wardrobe);
                 }}
                 onGunsmith={(g) => {
                   setGunsmith(g);
                   localStorage.setItem("doodle_gunsmith", JSON.stringify(g));
-                  account.saveProfileSoon(loadout, { gunsmith: g });
-                  gameRef.current?.applyLoadout(loadout, g);
+                  account.saveProfileSoon(loadout, { gunsmith: g, skins: wardrobe, wkills: weaponKills });
+                  gameRef.current?.applyLoadout(loadout, g, wardrobe);
+                }}
+                onWardrobe={(w) => {
+                  setWardrobe(w);
+                  localStorage.setItem("doodle_skins", JSON.stringify(w));
+                  account.saveProfileSoon(loadout, { gunsmith, skins: w, wkills: weaponKills });
+                  gameRef.current?.applyLoadout(loadout, gunsmith, w);
                 }}
                 onBack={() => setSwapping(false)}
               />
@@ -1222,31 +1303,159 @@ const pct = (v: number) => `${Math.round(Math.max(0.02, Math.min(1, v)) * 100)}%
  * you as well as what it buys, because an attachment that was pure upside
  * would just be a stat the gun should have had.
  */
+/** One locked-or-earned cosmetic chip. */
+function CosChip({
+  name,
+  blurb,
+  need,
+  kills,
+  on,
+  onPick,
+}: {
+  name: string;
+  blurb: string;
+  need: number;
+  kills: number;
+  on: boolean;
+  onPick: () => void;
+}) {
+  const locked = kills < need;
+  return (
+    <button
+      className={`att-chip ${on ? "on" : ""} ${locked ? "locked" : ""}`}
+      disabled={locked}
+      onClick={onPick}
+      title={locked ? `${need - kills} more kills with this weapon` : blurb}
+    >
+      <b>{name}</b>
+      <em>{blurb}</em>
+      <span className="mods">
+        {locked ? (
+          <i className="down">locked · {need - kills} more kills</i>
+        ) : (
+          <i className="up">{need ? `earned at ${need} kills` : "always yours"}</i>
+        )}
+      </span>
+    </button>
+  );
+}
+
 function Gunsmith({
   kind,
   build,
+  skin,
+  kills,
   onChange,
+  onSkin,
   onClose,
 }: {
   kind: WeaponKind;
   build: GunBuild;
+  skin: WeaponSkin;
+  kills: number;
   onChange: (b: GunBuild) => void;
+  onSkin: (s: WeaponSkin) => void;
   onClose: () => void;
 }) {
   const base = weaponDef(kind);
   const built = applyBuild(base, build);
   const fitted = SLOTS.filter((s) => build[s.id]).length;
+  const [tab, setTab] = useState<"rails" | "camo" | "charm" | "sticker">("rails");
+  const goal = nextCamo(kills);
+
+  const setPart = (part: keyof WeaponSkin, id: string | undefined) => {
+    const next = { ...skin };
+    if (id) next[part] = id;
+    else delete next[part];
+    onSkin(next);
+  };
 
   return (
     <div className="gs-panel">
       <div className="flex flex-wrap items-center gap-3 border-b-2 border-[var(--ink)] pb-2">
         <WeaponIcon kind={kind} className="wicon big" />
         <b className="text-2xl">{base.name}</b>
-        <span className="text-lg opacity-60">{fitted} of 4 rails fitted</span>
+        <span className="text-lg opacity-60">
+          {kills} kills{goal ? ` · ${goal.left} to ${goal.camo.name.toLowerCase()}` : " · every camo earned"}
+        </span>
         <button className="ink-btn ml-auto text-base" onClick={onClose}>
           done
         </button>
       </div>
+
+      <div className="gs-tabs">
+        {(
+          [
+            ["rails", `rails · ${fitted}/4`],
+            ["camo", "camo"],
+            ["charm", "charm"],
+            ["sticker", "sticker"],
+          ] as const
+        ).map(([id, label]) => (
+          <button key={id} className={`gun-chip ${tab === id ? "on" : ""}`} onClick={() => setTab(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "camo" && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {CAMOS.map((c) => (
+            <CosChip
+              key={c.id}
+              name={c.name}
+              blurb={c.blurb}
+              need={c.need}
+              kills={kills}
+              on={(skin.camo ?? CAMOS[0].id) === c.id}
+              onPick={() => setPart("camo", c.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {tab === "charm" && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className={`att-chip ${!skin.charm ? "on" : ""}`} onClick={() => setPart("charm", undefined)}>
+            <b>NONE</b>
+            <em>nothing dangling</em>
+          </button>
+          {CHARMS.map((c) => (
+            <CosChip
+              key={c.id}
+              name={c.name}
+              blurb={c.blurb}
+              need={c.need}
+              kills={kills}
+              on={skin.charm === c.id}
+              onPick={() => setPart("charm", c.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {tab === "sticker" && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button className={`att-chip ${!skin.sticker ? "on" : ""}`} onClick={() => setPart("sticker", undefined)}>
+            <b>NONE</b>
+            <em>bare receiver</em>
+          </button>
+          {STICKERS.map((c) => (
+            <CosChip
+              key={c.id}
+              name={c.name}
+              blurb={c.blurb}
+              need={c.need}
+              kills={kills}
+              on={skin.sticker === c.id}
+              onPick={() => setPart("sticker", c.id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {tab !== "rails" ? null : (
+        <>
 
       <div className="gs-stats">
         {STAT_ROWS.map((row) => {
@@ -1305,6 +1514,8 @@ function Gunsmith({
           </div>
         </div>
       ))}
+        </>
+      )}
     </div>
   );
 }
@@ -1312,14 +1523,20 @@ function Gunsmith({
 function LoadoutScreen({
   loadout,
   gunsmith,
+  wardrobe,
+  weaponKills,
   onChange,
   onGunsmith,
+  onWardrobe,
   onBack,
 }: {
   loadout: WeaponKind[];
   gunsmith: Gunsmith;
+  wardrobe: Wardrobe;
+  weaponKills: KillLog;
   onChange: (l: WeaponKind[]) => void;
   onGunsmith: (g: Gunsmith) => void;
+  onWardrobe: (w: Wardrobe) => void;
   onBack: () => void;
 }) {
   const carried = loadout.filter(isGun);
@@ -1362,7 +1579,10 @@ function LoadoutScreen({
               <Gunsmith
                 kind={carried[slot]}
                 build={gunsmith[carried[slot]] ?? {}}
+                skin={wardrobe[carried[slot]] ?? {}}
+                kills={weaponKills[carried[slot]] ?? 0}
                 onChange={(b) => onGunsmith({ ...gunsmith, [carried[slot]]: b })}
+                onSkin={(sk) => onWardrobe({ ...wardrobe, [carried[slot]]: sk })}
                 onClose={() => setTuning(null)}
               />
             )}

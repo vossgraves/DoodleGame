@@ -13,6 +13,7 @@ const DROP_LIFE = 30;
 const RESPAWN_SWAP = 5;
 import { Player, WEAPONS, type Weapon, type WeaponKind } from "./player";
 import type { Gunsmith } from "./attachments";
+import type { Wardrobe } from "./cosmetics";
 import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
@@ -150,6 +151,8 @@ export class Game {
   hud: HudSnap = defaultHud();
   onHud: ((h: HudSnap) => void) | null = null;
   onState: ((s: GameState) => void) | null = null;
+  /** fired per kill with the weapon that got it, so camos can progress */
+  onWeaponKill: (k: WeaponKind) => void = () => {};
   /** fires when the lobby roster, scores or match state change */
   onNet: (() => void) | null = null;
   match!: MatchNet;
@@ -160,9 +163,9 @@ export class Game {
    * Swap kit during the post-respawn window. Guarded here rather than in the UI
    * so holding the menu open past the window does not become a free re-arm.
    */
-  applyLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith): boolean {
+  applyLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith, wardrobe?: Wardrobe): boolean {
     if (this.swapWindow <= 0 || this.player.spentResource || !this.player.alive) return false;
-    this.player.setLoadout(kinds, gunsmith);
+    this.player.setLoadout(kinds, gunsmith, wardrobe);
     return true;
   }
 
@@ -221,6 +224,7 @@ export class Game {
     mapKey: string = DEFAULT_MAP,
     loadout?: WeaponKind[],
     gunsmith?: Gunsmith,
+    wardrobe?: Wardrobe,
   ) {
     this.canvas = canvas;
     this.mode = mode;
@@ -253,6 +257,7 @@ export class Game {
       onDeath: () => this.handleDeath(),
       loadout,
       gunsmith,
+      wardrobe,
     });
     this.player.adsToggle = localStorage.getItem("doodle_ads_toggle") === "1";
     this.player.reset(this.level.playerStart);
@@ -454,6 +459,8 @@ export class Game {
 
   private onKill(name: string, pts: number, crit: boolean) {
     this.kills += 1;
+    // the gun in hand earns its own progression, which is what unlocks camos
+    this.onWeaponKill(this.player.weapon.def.kind);
     this.streaks.addKill();
     this.combo = Math.min(12, this.combo + 1);
     this.comboT = 2.6;
