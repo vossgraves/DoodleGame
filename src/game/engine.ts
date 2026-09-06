@@ -12,6 +12,7 @@ const DROP_LIFE = 30;
 /** seconds after respawning during which the loadout can still be changed */
 const RESPAWN_SWAP = 5;
 import { Player, WEAPONS, type Weapon, type WeaponKind } from "./player";
+import type { Gunsmith } from "./attachments";
 import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
@@ -159,9 +160,9 @@ export class Game {
    * Swap kit during the post-respawn window. Guarded here rather than in the UI
    * so holding the menu open past the window does not become a free re-arm.
    */
-  applyLoadout(kinds: WeaponKind[]): boolean {
+  applyLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith): boolean {
     if (this.swapWindow <= 0 || this.player.spentResource || !this.player.alive) return false;
-    this.player.setLoadout(kinds);
+    this.player.setLoadout(kinds, gunsmith);
     return true;
   }
 
@@ -214,7 +215,13 @@ export class Game {
   private disposed = false;
   private onResize: () => void;
 
-  constructor(canvas: HTMLCanvasElement, mode: Mode, mapKey: string = DEFAULT_MAP, loadout?: WeaponKind[]) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    mode: Mode,
+    mapKey: string = DEFAULT_MAP,
+    loadout?: WeaponKind[],
+    gunsmith?: Gunsmith,
+  ) {
     this.canvas = canvas;
     this.mode = mode;
     this.mapKey = mapKey;
@@ -245,6 +252,7 @@ export class Game {
       onHurt: (_a, from) => this.handleHurt(from),
       onDeath: () => this.handleDeath(),
       loadout,
+      gunsmith,
     });
     this.player.adsToggle = localStorage.getItem("doodle_ads_toggle") === "1";
     this.player.reset(this.level.playerStart);

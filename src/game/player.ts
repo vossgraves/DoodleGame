@@ -4,6 +4,7 @@ import { World } from "./physics";
 import { INK, makeInkMaterial } from "./renderer";
 import type { Input } from "./input";
 import type { AudioSys } from "./audio";
+import { applyBuild, type GunBuild, type Gunsmith } from "./attachments";
 
 export type WeaponKind =
   | "rifle"
@@ -40,12 +41,21 @@ export interface WeaponDef {
   fovKick: number;
   cycleDur: number;
   isGun: boolean;
+  /** how briskly the sights come up — higher is snappier */
+  adsSpeed: number;
+  /** multiplier on walk speed while this is the weapon in hand */
+  moveMul: number;
+  /** suppressed: no bang, no flash to speak of */
+  quiet: boolean;
   /** rounds committed per trigger pull; 0 or absent means not a burst weapon */
   burst?: number;
   burstDelay?: number;
 }
 
-const DEFS: Record<WeaponKind, WeaponDef> = {
+/** How the base weapons are written: handling is filled in below. */
+type BaseDef = Omit<WeaponDef, "adsSpeed" | "moveMul" | "quiet">;
+
+const RAW_DEFS: Record<WeaponKind, BaseDef> = {
   rifle: {
     kind: "rifle",
     name: "RIFLE",
@@ -65,7 +75,7 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
     auto: true,
     reloadDur: 1.4,
     reloadType: "mag",
-    falloff: null,
+    falloff: [30, 55, 0.7],
     camKick: [0.012, 0.004],
     fovKick: 1.2,
     cycleDur: 0,
@@ -115,7 +125,7 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
     auto: false,
     reloadDur: 2.0,
     reloadType: "mag",
-    falloff: null,
+    falloff: [55, 92, 0.85],
     camKick: [0.055, 0.008],
     fovKick: 4.2,
     cycleDur: 0.8,
@@ -165,7 +175,7 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
     auto: false,
     reloadDur: 1.5,
     reloadType: "mag",
-    falloff: null,
+    falloff: [24, 46, 0.62],
     camKick: [0.016, 0.005],
     fovKick: 1.5,
     cycleDur: 0,
@@ -217,7 +227,7 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
     auto: true,
     reloadDur: 3.2,
     reloadType: "mag",
-    falloff: null,
+    falloff: [28, 52, 0.7],
     camKick: [0.014, 0.006],
     fovKick: 1.4,
     cycleDur: 0,
@@ -242,7 +252,7 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
     auto: false,
     reloadDur: 2.2,
     reloadType: "mag",
-    falloff: null,
+    falloff: [16, 34, 0.5],
     camKick: [0.06, 0.014],
     fovKick: 4.5,
     cycleDur: 0.2,
@@ -275,6 +285,29 @@ const DEFS: Record<WeaponKind, WeaponDef> = {
   },
 };
 
+/**
+ * Handling, kept apart from the ballistics above so the difference between a
+ * light SMG and an LMG you have to heave around reads at a glance. Anything
+ * left out is an average gun.
+ */
+const HANDLING: Partial<Record<WeaponKind, { adsSpeed?: number; moveMul?: number }>> = {
+  lmg: { adsSpeed: 8.0, moveMul: 0.9 },
+  sniper: { adsSpeed: 7.5, moveMul: 0.94 },
+  shotgun: { adsSpeed: 11, moveMul: 0.98 },
+  smg: { adsSpeed: 14.5, moveMul: 1.05 },
+  carbine: { adsSpeed: 13, moveMul: 1.02 },
+  revolver: { adsSpeed: 13.5, moveMul: 1.04 },
+  pistol: { adsSpeed: 15.5, moveMul: 1.07 },
+  knife: { adsSpeed: 16, moveMul: 1.1 },
+};
+
+const DEFS = Object.fromEntries(
+  Object.entries(RAW_DEFS).map(([k, d]) => [
+    k,
+    { adsSpeed: 12, moveMul: 1, quiet: false, ...HANDLING[k as WeaponKind], ...d },
+  ]),
+) as Record<WeaponKind, WeaponDef>;
+
 /** Every weapon, for loadout UIs. Guns first, melee last. */
 export const WEAPONS: { kind: WeaponKind; name: string; hint: string; isGun: boolean }[] = (
   ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "knife"] as WeaponKind[]
@@ -283,6 +316,11 @@ export const WEAPONS: { kind: WeaponKind; name: string; hint: string; isGun: boo
 export const GUN_KINDS = WEAPONS.filter((w) => w.isGun).map((w) => w.kind);
 export const MELEE_KINDS = WEAPONS.filter((w) => !w.isGun).map((w) => w.kind);
 export const DEFAULT_LOADOUT: WeaponKind[] = ["rifle", "shotgun", "sniper", "knife"];
+
+/** The bare definition for a weapon, before any gunsmith work. */
+export function weaponDef(kind: WeaponKind): WeaponDef {
+  return { ...DEFS[kind] };
+}
 
 /** Names that used to exist, so an old saved loadout still works. */
 const LEGACY_KINDS: Record<string, WeaponKind> = { katana: "knife" };
@@ -320,6 +358,19 @@ function cyl(r: number, h: number, x: number, y: number, z: number, mat: THREE.M
   return m;
 }
 
+type V3 = readonly [number, number, number];
+/** Where each gun's bolt-on parts hang. Melee has none, so it is absent. */
+const ANCHORS: Partial<Record<WeaponKind, { muzzle: V3; sight: V3; mag: V3; stock: V3 }>> = {
+  rifle: { muzzle: [0, 0.08, -1.0], sight: [0, 0.22, -0.12], mag: [0, -0.2, -0.06], stock: [0, 0.04, 0.3] },
+  carbine: { muzzle: [0, 0.08, -0.84], sight: [0, 0.22, -0.12], mag: [0, -0.2, -0.06], stock: [0, 0.04, 0.26] },
+  smg: { muzzle: [0, 0.07, -0.66], sight: [0, 0.18, -0.1], mag: [0, -0.26, -0.02], stock: [0, 0.03, 0.2] },
+  lmg: { muzzle: [0, 0.1, -1.14], sight: [0, 0.26, -0.1], mag: [0, -0.24, -0.02], stock: [0, 0.03, 0.32] },
+  shotgun: { muzzle: [0, 0.06, -0.92], sight: [0, 0.16, -0.1], mag: [0, -0.14, -0.32], stock: [0, 0.02, 0.3] },
+  sniper: { muzzle: [0, 0.1, -1.3], sight: [0, 0.26, -0.5], mag: [0, -0.16, -0.06], stock: [0, 0.06, 0.3] },
+  revolver: { muzzle: [0, 0.06, -0.54], sight: [0, 0.14, -0.16], mag: [0, 0.0, -0.04], stock: [0, -0.14, 0.16] },
+  pistol: { muzzle: [0, 0.05, -0.42], sight: [0, 0.14, -0.1], mag: [0, -0.24, 0.02], stock: [0, 0.06, 0.1] },
+};
+
 function starGeo(n = 7, r1 = 0.16, r2 = 0.06) {
   const s = new THREE.Shape();
   for (let i = 0; i < n * 2; i++) {
@@ -353,13 +404,15 @@ export class Weapon {
   burstT = 0;
   /** counts down while the gun is being swung up into view */
   equipT = 0;
+  private build_: GunBuild | undefined;
   private ink: THREE.ShaderMaterial;
   private solid: THREE.ShaderMaterial;
   private orange: THREE.ShaderMaterial;
   private black: THREE.ShaderMaterial;
 
-  constructor(kind: WeaponKind) {
-    this.def = { ...DEFS[kind] };
+  constructor(kind: WeaponKind, build?: GunBuild) {
+    this.build_ = DEFS[kind].isGun ? build : undefined;
+    this.def = applyBuild(DEFS[kind], this.build_);
     this.mag = this.def.magSize;
     this.reserve = this.def.reserve;
     this.spreadCur = this.def.spread;
@@ -460,7 +513,91 @@ export class Weapon {
       edge.position.z = BLADE_RETRACT;
       this.hand(0.05, -0.08, 0.12);
     }
+    this.fitAttachments();
     this.root.visible = false;
+  }
+
+  /**
+   * Bolt the gunsmith parts onto the model. Everything hangs off a per-weapon
+   * anchor so one set of part shapes serves all eight guns, and anything that
+   * lengthens the barrel drags the muzzle flash forward with it.
+   */
+  private fitAttachments() {
+    const anchor = ANCHORS[this.def.kind];
+    if (!anchor || !this.build_) return;
+    const m = this.ink;
+    const b = this.black;
+    const at = (p: readonly [number, number, number]) => p;
+
+    const sight = this.build_.sight;
+    if (sight) {
+      const [x, y, z] = at(anchor.sight);
+      if (sight === "reddot") {
+        bx(0.08, 0.06, 0.14, x, y - 0.02, z, b, this.root);
+        bx(0.05, 0.05, 0.02, x, y + 0.02, z - 0.05, this.solid, this.root);
+      } else if (sight === "holo") {
+        bx(0.13, 0.03, 0.16, x, y - 0.05, z, b, this.root);
+        bx(0.02, 0.1, 0.02, x - 0.055, y, z - 0.06, b, this.root);
+        bx(0.02, 0.1, 0.02, x + 0.055, y, z - 0.06, b, this.root);
+        bx(0.1, 0.02, 0.02, x, y + 0.04, z - 0.06, this.solid, this.root);
+      } else if (sight === "scope4x") {
+        cyl(0.075, 0.42, x, y + 0.02, z - 0.04, b, this.root);
+        cyl(0.095, 0.06, x, y + 0.02, z - 0.24, b, this.root);
+        bx(0.05, 0.09, 0.06, x, y - 0.06, z + 0.1, b, this.root);
+        bx(0.05, 0.09, 0.06, x, y - 0.06, z - 0.16, b, this.root);
+      } else {
+        // canted irons: a folded post off to one side, nothing to look through
+        bx(0.02, 0.09, 0.02, x + 0.06, y - 0.03, z - 0.1, b, this.root);
+        bx(0.02, 0.07, 0.02, x + 0.06, y - 0.04, z + 0.1, b, this.root);
+      }
+    }
+
+    const muzzle = this.build_.muzzle;
+    if (muzzle) {
+      const [x, y, z] = at(anchor.muzzle);
+      if (muzzle === "suppressor") {
+        cyl(0.062, 0.42, x, y, z - 0.19, b, this.root);
+        this.flash.position.z = z - 0.4;
+        this.flash.scale.multiplyScalar(0.3);
+      } else if (muzzle === "compensator") {
+        cyl(0.062, 0.14, x, y, z - 0.06, b, this.root);
+        bx(0.14, 0.02, 0.09, x, y + 0.05, z - 0.06, b, this.root);
+        this.flash.position.z = z - 0.13;
+      } else if (muzzle === "brake") {
+        cyl(0.058, 0.12, x, y, z - 0.05, b, this.root);
+        bx(0.02, 0.05, 0.13, x - 0.07, y, z - 0.05, b, this.root);
+        bx(0.02, 0.05, 0.13, x + 0.07, y, z - 0.05, b, this.root);
+        this.flash.position.z = z - 0.11;
+      } else if (muzzle === "longbarrel") {
+        cyl(0.038, 0.34, x, y, z - 0.16, m, this.root);
+        this.flash.position.z = z - 0.33;
+      }
+    }
+
+    const mag = this.build_.mag;
+    if (mag) {
+      const [x, y, z] = at(anchor.mag);
+      if (mag === "extmag") bx(0.09, 0.34, 0.13, x, y - 0.13, z, b, this.root);
+      else if (mag === "fastmag") {
+        bx(0.09, 0.16, 0.13, x, y - 0.04, z, b, this.root);
+        bx(0.13, 0.03, 0.05, x, y - 0.12, z, m, this.root);
+      } else if (mag === "heavymag") bx(0.13, 0.2, 0.17, x, y - 0.06, z, b, this.root);
+      else bx(0.06, 0.16, 0.1, x, y - 0.04, z, m, this.root);
+    }
+
+    const stock = this.build_.stock;
+    if (stock) {
+      const [x, y, z] = at(anchor.stock);
+      if (stock === "tacstock") {
+        bx(0.09, 0.15, 0.3, x, y, z + 0.1, b, this.root);
+        bx(0.07, 0.05, 0.2, x, y + 0.1, z + 0.06, m, this.root);
+      } else if (stock === "lightstock") {
+        bx(0.03, 0.03, 0.3, x, y + 0.07, z + 0.1, m, this.root);
+        bx(0.03, 0.03, 0.3, x, y - 0.07, z + 0.1, m, this.root);
+        bx(0.07, 0.17, 0.03, x, y, z + 0.25, m, this.root);
+      }
+      // nostock deliberately adds nothing
+    }
   }
 
   private placeFlash(x: number, y: number, z: number, scale: number) {
@@ -567,6 +704,8 @@ export interface PlayerHooks {
   onDeath: () => void;
   /** weapons to carry; defaults to DEFAULT_LOADOUT */
   loadout?: WeaponKind[];
+  /** per-weapon gunsmith builds */
+  gunsmith?: Gunsmith;
 }
 
 const G = 26;
@@ -633,11 +772,14 @@ export class Player {
   /** aim-down-sights as a toggle rather than hold; a settings choice */
   adsToggle = false;
   private adsOn = false;
+  private adsBlend = 0;
+  private gunsmith: Gunsmith = {};
   private lastGround = true;
 
   constructor(hooks: PlayerHooks) {
     this.hooks = hooks;
-    this.weapons = sanitizeLoadout(hooks.loadout ?? DEFAULT_LOADOUT).map((k) => new Weapon(k));
+    this.gunsmith = hooks.gunsmith ?? {};
+    this.weapons = sanitizeLoadout(hooks.loadout ?? DEFAULT_LOADOUT).map((k) => new Weapon(k, this.gunsmith[k]));
     this.weapon = this.weapons[0];
     this.weapon.equip();
     hooks.camera.add(this.rig);
@@ -707,9 +849,10 @@ export class Player {
   }
 
   /** Swap the whole kit — used by the brief window after a respawn. */
-  setLoadout(kinds: WeaponKind[]) {
+  setLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith) {
     this.clearWeapons();
-    this.weapons = sanitizeLoadout(kinds).map((k) => new Weapon(k));
+    if (gunsmith) this.gunsmith = gunsmith;
+    this.weapons = sanitizeLoadout(kinds).map((k) => new Weapon(k, this.gunsmith[k]));
     for (const w of this.weapons) this.rig.add(w.root);
     this.weaponIndex = 0;
     this.weapon = this.weapons[0];
@@ -742,7 +885,8 @@ export class Player {
       if (m.geometry) m.geometry.dispose();
     });
 
-    const fresh = new Weapon(kind);
+    // a gun off the ground still gets your build for it — the parts are yours
+    const fresh = new Weapon(kind, this.gunsmith[kind]);
     this.weapons[slot] = fresh;
     this.rig.add(fresh.root);
     if (this.weaponIndex === slot) {
@@ -892,7 +1036,9 @@ export class Player {
     this.dashCd = Math.max(0, this.dashCd - dt);
 
     const wish = this.wishDir();
-    const speed = this.sliding ? SPRINT * 1.15 : this.crouching ? CROUCH : this.sprinting ? SPRINT : WALK;
+    const base = this.sliding ? SPRINT * 1.15 : this.crouching ? CROUCH : this.sprinting ? SPRINT : WALK;
+    // what you are carrying sets the pace — an LMG is not an SMG
+    const speed = base * this.weapon.def.moveMul;
     if (this.onGround) {
       this.vel.x *= Math.pow(0.0008, dt);
       this.vel.z *= Math.pow(0.0008, dt);
@@ -1014,7 +1160,8 @@ export class Player {
     this.recoilY.kick((Math.random() - 0.5) * w.def.camKick[1] * 30);
     this.fovKick.kick(w.def.fovKick * 8);
     this.shake += 0.04;
-    if (w.def.kind === "shotgun") this.hooks.audio.shotgun();
+    if (w.def.quiet) this.hooks.audio.suppressed();
+    else if (w.def.kind === "shotgun") this.hooks.audio.shotgun();
     else if (w.def.kind === "sniper") this.hooks.audio.sniper();
     else this.hooks.audio.shot();
     this.hooks.input.rumble(0.35, 0.5, 50);
@@ -1069,13 +1216,16 @@ export class Player {
     const ads = this.aiming ? 1 : 0;
     const baseFov = 82;
     const adsFov = this.weapon.def.adsFov;
-    cam.fov = damp(cam.fov, lerpFov(baseFov, adsFov, ads) + this.fovKick.value * 0.04, 12, dt);
+    cam.fov = damp(cam.fov, lerpFov(baseFov, adsFov, ads) + this.fovKick.value * 0.04, this.weapon.def.adsSpeed, dt);
     cam.updateProjectionMatrix();
   }
 
   private animateGun(dt: number) {
     const w = this.weapon;
-    const ads = this.aiming ? 1 : 0;
+    // the gun eases into the shoulder at the weapon's own aim speed, so a 4x
+    // scope visibly takes longer to settle than a red dot
+    this.adsBlend = damp(this.adsBlend, this.aiming ? 1 : 0, w.def.adsSpeed, dt);
+    const ads = this.adsBlend;
     const sprint = this.sprinting && !this.aiming ? 1 : 0;
     const base = new THREE.Vector3(0.22, -0.18, -0.38);
     const aim = new THREE.Vector3(0.0, -0.14, -0.32);

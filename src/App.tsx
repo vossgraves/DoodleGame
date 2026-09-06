@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Game, type GameState, type HudSnap } from "./game/engine";
 import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
-import { WEAPONS, sanitizeLoadout, type WeaponKind } from "./game/player";
+import { WEAPONS, sanitizeLoadout, weaponDef, type WeaponKind } from "./game/player";
+import {
+  SLOTS,
+  applyBuild,
+  attachmentsFor,
+  modLines,
+  sanitizeGunsmith,
+  type GunBuild,
+  type Gunsmith,
+} from "./game/attachments";
 import { SCORE_TARGET, type MatchMode, type MatchNet } from "./game/match";
 import type { BotSkill } from "./game/bot";
 import { WeaponIcon } from "./WeaponIcon";
@@ -33,6 +42,14 @@ function loadLoadout(): WeaponKind[] {
     return sanitizeLoadout(JSON.parse(localStorage.getItem("doodle_loadout") || "null"));
   } catch {
     return sanitizeLoadout(null);
+  }
+}
+
+function loadGunsmith(): Gunsmith {
+  try {
+    return sanitizeGunsmith(JSON.parse(localStorage.getItem("doodle_gunsmith") || "null"));
+  } catch {
+    return {};
   }
 }
 
@@ -113,6 +130,7 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("district");
   const [mapKey, setMapKey] = useState(() => localStorage.getItem("doodle_map") || DEFAULT_MAP);
   const [loadout, setLoadout] = useState<WeaponKind[]>(loadLoadout);
+  const [gunsmith, setGunsmith] = useState<Gunsmith>(loadGunsmith);
   const [playerName, setPlayerName] = useState(() => localStorage.getItem("doodle_name") || "");
   const [matchMode, setMatchMode] = useState<MatchMode>("ffa");
   // MatchNet lives outside React; bump this to re-read it
@@ -144,6 +162,8 @@ export default function App() {
   // that effect, swapping kit mid-match would tear the whole match down.
   const loadoutRef = useRef(loadout);
   loadoutRef.current = loadout;
+  const gunsmithRef = useRef(gunsmith);
+  gunsmithRef.current = gunsmith;
 
   useEffect(() => {
     setTouch(isTouchDevice());
@@ -199,6 +219,8 @@ export default function App() {
       if (Array.isArray(r.profile?.loadout) && r.profile.loadout.length) {
         setLoadout(sanitizeLoadout(r.profile.loadout));
       }
+      const saved = sanitizeGunsmith((r.profile?.settings as { gunsmith?: unknown })?.gunsmith);
+      if (Object.keys(saved).length) setGunsmith(saved);
       if (!localStorage.getItem("doodle_name")) setPlayerName(r.user.username);
     });
     return () => {
@@ -223,7 +245,7 @@ export default function App() {
     if (screen !== "game") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas, mode, mapKey, loadoutRef.current);
+    const g = new Game(canvas, mode, mapKey, loadoutRef.current, gunsmithRef.current);
     gameRef.current = g;
     g.onHud = (h) => {
       hudLatest.current = h;
@@ -304,6 +326,8 @@ export default function App() {
             setMe(user);
             setStats(s);
             if (profile?.loadout?.length) setLoadout(sanitizeLoadout(profile.loadout));
+            const kits = sanitizeGunsmith((profile?.settings as { gunsmith?: unknown })?.gunsmith);
+            if (Object.keys(kits).length) setGunsmith(kits);
             if (!localStorage.getItem("doodle_name")) {
               setPlayerName(user.username);
               localStorage.setItem("doodle_name", user.username);
@@ -319,11 +343,17 @@ export default function App() {
       {screen === "loadout" && (
         <LoadoutScreen
           loadout={loadout}
+          gunsmith={gunsmith}
           onChange={(l) => {
             setLoadout(l);
             localStorage.setItem("doodle_loadout", JSON.stringify(l));
             // coalesced: tapping through chips must not be one API call each
-            account.saveProfileSoon(l);
+            account.saveProfileSoon(l, { gunsmith });
+          }}
+          onGunsmith={(g) => {
+            setGunsmith(g);
+            localStorage.setItem("doodle_gunsmith", JSON.stringify(g));
+            account.saveProfileSoon(loadout, { gunsmith: g });
           }}
           onBack={() => {
             account.flushProfile();
@@ -405,11 +435,18 @@ export default function App() {
             <div className="absolute inset-0 z-40">
               <LoadoutScreen
                 loadout={loadout}
+                gunsmith={gunsmith}
                 onChange={(l) => {
                   setLoadout(l);
                   localStorage.setItem("doodle_loadout", JSON.stringify(l));
-                  account.saveProfileSoon(l);
-                  gameRef.current?.applyLoadout(l);
+                  account.saveProfileSoon(l, { gunsmith });
+                  gameRef.current?.applyLoadout(l, gunsmith);
+                }}
+                onGunsmith={(g) => {
+                  setGunsmith(g);
+                  localStorage.setItem("doodle_gunsmith", JSON.stringify(g));
+                  account.saveProfileSoon(loadout, { gunsmith: g });
+                  gameRef.current?.applyLoadout(loadout, g);
                 }}
                 onBack={() => setSwapping(false)}
               />
@@ -1162,17 +1199,132 @@ function Online({
   );
 }
 
+/**
+ * The eight numbers the gunsmith reports back. Each is normalised to 0–1 on a
+ * fixed scale so a bar means the same thing on a pistol as on an LMG, and so
+ * the base and built bars can be drawn on top of one another.
+ */
+const STAT_ROWS: { name: string; of: (d: ReturnType<typeof weaponDef>) => number }[] = [
+  { name: "damage", of: (d) => d.damage / 60 },
+  { name: "fire rate", of: (d) => 1 / d.interval / 14 },
+  { name: "range", of: (d) => (d.falloff ? d.falloff[1] / 45 : 1) },
+  { name: "control", of: (d) => 1 - d.camKick[0] / 0.08 },
+  { name: "mobility", of: (d) => (d.moveMul - 0.85) / 0.35 },
+  { name: "aim speed", of: (d) => (d.adsSpeed - 6) / 12 },
+  { name: "magazine", of: (d) => d.magSize / 60 },
+  { name: "reload", of: (d) => 1 - (d.reloadDur - 0.3) / 2.2 },
+];
+
+const pct = (v: number) => `${Math.round(Math.max(0.02, Math.min(1, v)) * 100)}%`;
+
+/**
+ * The gunsmith: four rails, one part each. Every chip spells out what it costs
+ * you as well as what it buys, because an attachment that was pure upside
+ * would just be a stat the gun should have had.
+ */
+function Gunsmith({
+  kind,
+  build,
+  onChange,
+  onClose,
+}: {
+  kind: WeaponKind;
+  build: GunBuild;
+  onChange: (b: GunBuild) => void;
+  onClose: () => void;
+}) {
+  const base = weaponDef(kind);
+  const built = applyBuild(base, build);
+  const fitted = SLOTS.filter((s) => build[s.id]).length;
+
+  return (
+    <div className="gs-panel">
+      <div className="flex flex-wrap items-center gap-3 border-b-2 border-[var(--ink)] pb-2">
+        <WeaponIcon kind={kind} className="wicon big" />
+        <b className="text-2xl">{base.name}</b>
+        <span className="text-lg opacity-60">{fitted} of 4 rails fitted</span>
+        <button className="ink-btn ml-auto text-base" onClick={onClose}>
+          done
+        </button>
+      </div>
+
+      <div className="gs-stats">
+        {STAT_ROWS.map((row) => {
+          const a = row.of(base);
+          const b = row.of(built);
+          const diff = Math.round((b - a) * 100);
+          return (
+            <div key={row.name} className="stat-row">
+              <span className="stat-name">{row.name}</span>
+              <span className="stat-bar">
+                <i className="base" style={{ width: pct(a) }} />
+                <i className={`built ${b >= a ? "up" : "down"}`} style={{ width: pct(b) }} />
+              </span>
+              <span className={`stat-delta ${diff > 0 ? "up" : diff < 0 ? "down" : ""}`}>
+                {diff ? (diff > 0 ? `+${diff}` : diff) : "–"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {SLOTS.map((slot) => (
+        <div key={slot.id} className="mt-4">
+          <div className="mb-2 text-xl">
+            {slot.name} <span className="text-base opacity-60">· {slot.blurb}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={`att-chip ${!build[slot.id] ? "on" : ""}`}
+              onClick={() => {
+                const next = { ...build };
+                delete next[slot.id];
+                onChange(next);
+              }}
+            >
+              <b>NONE</b>
+              <em>rail left bare</em>
+            </button>
+            {attachmentsFor(slot.id).map((a) => (
+              <button
+                key={a.id}
+                className={`att-chip ${build[slot.id] === a.id ? "on" : ""}`}
+                onClick={() => onChange({ ...build, [slot.id]: a.id })}
+              >
+                <b>{a.name}</b>
+                <em>{a.blurb}</em>
+                <span className="mods">
+                  {modLines(a).map((m) => (
+                    <i key={m.text} className={m.good ? "up" : "down"}>
+                      {m.text}
+                    </i>
+                  ))}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function LoadoutScreen({
   loadout,
+  gunsmith,
   onChange,
+  onGunsmith,
   onBack,
 }: {
   loadout: WeaponKind[];
+  gunsmith: Gunsmith;
   onChange: (l: WeaponKind[]) => void;
+  onGunsmith: (g: Gunsmith) => void;
   onBack: () => void;
 }) {
   const carried = loadout.filter(isGun);
   const melee = loadout.find((k) => !isGun(k)) ?? "knife";
+  const [tuning, setTuning] = useState<WeaponKind | null>(null);
 
   const setSlot = (slot: number, kind: WeaponKind) => {
     const next = [...carried];
@@ -1197,7 +1349,23 @@ function LoadoutScreen({
               <span>slot {slot + 1}</span>
               <WeaponIcon kind={carried[slot]} className="wicon big" />
               <span className="text-lg opacity-60">{WEAPONS.find((w) => w.kind === carried[slot])?.name}</span>
+              <button
+                className="ink-btn ml-auto text-base"
+                onClick={() => setTuning(tuning === carried[slot] ? null : carried[slot])}
+              >
+                gunsmith
+                {SLOTS.filter((s) => gunsmith[carried[slot]]?.[s.id]).length > 0 &&
+                  ` · ${SLOTS.filter((s) => gunsmith[carried[slot]]?.[s.id]).length}`}
+              </button>
             </div>
+            {tuning === carried[slot] && (
+              <Gunsmith
+                kind={carried[slot]}
+                build={gunsmith[carried[slot]] ?? {}}
+                onChange={(b) => onGunsmith({ ...gunsmith, [carried[slot]]: b })}
+                onClose={() => setTuning(null)}
+              />
+            )}
             <div className="flex flex-wrap gap-2">
               {GUNS.map((w) => (
                 <button

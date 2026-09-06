@@ -1098,3 +1098,125 @@ input[type="range"].ink-range::-webkit-slider-thumb {
     min-height: 140px;
   }
 }
+
+/* ---- gunsmith ---------------------------------------------------------- */
+.gs-panel {
+  margin: 10px 0 14px;
+  padding: 12px 14px 16px;
+  border: 2.5px dashed var(--ink);
+  border-radius: 12px;
+  background: rgba(246, 243, 230, 0.55);
+}
+
+.gs-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 2px 20px;
+  margin-top: 10px;
+}
+.stat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+}
+.stat-name {
+  flex: 0 0 82px;
+  opacity: 0.7;
+}
+.stat-bar {
+  position: relative;
+  flex: 1 1 auto;
+  height: 9px;
+  border: 2px solid var(--ink);
+  border-radius: 5px;
+  overflow: hidden;
+}
+/* the base gun sits underneath as a hatch; the built gun paints over it */
+.stat-bar .base {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: repeating-linear-gradient(
+    45deg,
+    rgba(45, 51, 66, 0.45) 0 2px,
+    transparent 2px 5px
+  );
+}
+.stat-bar .built {
+  position: absolute;
+  inset: 2px auto 2px 0;
+  border-radius: 3px;
+}
+.stat-bar .built.up {
+  background: var(--ink);
+}
+.stat-bar .built.down {
+  background: var(--red);
+}
+.stat-delta {
+  flex: 0 0 34px;
+  text-align: right;
+  font-size: 15px;
+  opacity: 0.45;
+}
+.stat-delta.up {
+  color: var(--ink);
+  opacity: 1;
+}
+.stat-delta.down {
+  color: var(--red);
+  opacity: 1;
+}
+
+.att-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 190px;
+  padding: 6px 10px 8px;
+  border: 2.5px solid var(--ink);
+  border-radius: 9px;
+  background: rgba(246, 243, 230, 0.6);
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.att-chip:hover {
+  background: rgba(26, 48, 192, 0.1);
+}
+.att-chip.on {
+  border-color: var(--red);
+  background: rgba(208, 32, 48, 0.12);
+}
+.att-chip b {
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+.att-chip em {
+  font-size: 13px;
+  font-style: normal;
+  line-height: 1.15;
+  opacity: 0.65;
+}
+.att-chip .mods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-top: 3px;
+}
+.att-chip .mods i {
+  font-size: 12px;
+  font-style: normal;
+}
+.att-chip .mods i.up::before {
+  content: "▲ ";
+}
+.att-chip .mods i.down::before {
+  content: "▼ ";
+  color: var(--red);
+}
+.att-chip .mods i.down {
+  color: var(--red);
+}

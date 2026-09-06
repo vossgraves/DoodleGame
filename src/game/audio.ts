@@ -109,6 +109,12 @@ export class AudioSys {
     this.noiseBurst(0.09, 1800, 1.2, 0.22);
     this.beep(220, 0.07, "square", 0.08, 0.45);
   }
+  /** A suppressed shot: the action working, and very little else. */
+  suppressed() {
+    this.ensure();
+    this.noiseBurst(0.05, 520, 0.8, 0.07, "lowpass");
+    this.beep(150, 0.05, "triangle", 0.03, 0.6);
+  }
   shotgun() {
     this.ensure();
     this.noiseBurst(0.18, 700, 0.7, 0.38, "lowpass");
