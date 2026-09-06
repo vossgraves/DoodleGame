@@ -489,6 +489,56 @@ canvas.game-canvas {
   background: rgba(208, 32, 48, 0.1);
 }
 
+.ink-input {
+  border: 2.5px solid var(--ink);
+  border-radius: 8px;
+  background: rgba(246, 243, 230, 0.7);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 22px;
+  padding: 5px 12px;
+  min-width: 0;
+  text-align: center;
+  outline: none;
+}
+.ink-input:focus {
+  border-color: var(--red);
+}
+
+/* live score while a match is running — must never eat a click */
+.net-score {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  border: 2.5px solid var(--ink);
+  border-radius: 10px;
+  background: rgba(246, 243, 230, 0.55);
+  padding: 5px 14px;
+  min-width: 190px;
+  font-size: 19px;
+  z-index: 21;
+}
+.net-score > div {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.net-score .rank {
+  opacity: 0.55;
+  width: 18px;
+}
+.net-score > div > span:nth-child(2) {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.net-score .me {
+  color: var(--red);
+}
+
 .gun-chip {
   border: 2.5px solid var(--ink);
   border-radius: 9px;

@@ -5,6 +5,8 @@ import { rand, randInt, clamp, damp, wrapAngle, choose, TAU } from "./math";
 import type { Mode } from "./level";
 import type { Player } from "./player";
 import type { AudioSys } from "./audio";
+// type-only, so this does not create a runtime cycle with remote.ts
+import type { NetTarget } from "./remote";
 
 export type EnemyKind =
   | "grunt"
@@ -21,7 +23,7 @@ export type EnemyKind =
   | "boss"
   | "zboss";
 
-interface TypeDef {
+export interface TypeDef {
   hp: number;
   speed: number;
   kind: EnemyKind;
@@ -56,7 +58,7 @@ export const TYPES: Record<EnemyKind, TypeDef> = {
   zboss: { hp: 2800, speed: 2.8, kind: "zboss", name: "THE UNDEAD KING", scale: 2.6, score: 3000, dmg: 26, ink: INK.RED, hat: "crown", range: 3.2, melee: true, zombie: true, boss: true },
 };
 
-interface BodyParts {
+export interface BodyParts {
   root: THREE.Group;
   head: THREE.Object3D;
   torso: THREE.Object3D;
@@ -68,7 +70,7 @@ interface BodyParts {
   xeyes: THREE.Object3D;
 }
 
-function humanoid(def: TypeDef): BodyParts {
+export function humanoid(def: TypeDef): BodyParts {
   const ink = makeInkMaterial({ ink: def.ink, shadeBias: -0.08 });
   const solid = makeInkMaterial({ ink: def.ink, fill: true });
   const black = makeInkMaterial({ ink: INK.BLACK, fill: true });
@@ -271,6 +273,9 @@ export class Combat {
   enemies: Enemy[] = [];
   projectiles: Projectile[] = [];
   pickups: Pickup[] = [];
+  /** other players, shot through the same path as bots */
+  remotes: NetTarget[] = [];
+  onRemoteHit: ((t: NetTarget, dmg: number, crit: boolean, point: THREE.Vector3) => void) | null = null;
   private projGeo = new THREE.SphereGeometry(0.07, 6, 5);
   private projMat = makeInkMaterial({ ink: INK.RED, fill: true });
   private spitMat = makeInkMaterial({ ink: INK.GREEN, fill: true });
@@ -422,7 +427,7 @@ export class Combat {
     headMul: number,
     falloff: [number, number, number] | null,
     player: Player,
-  ): { hit: boolean; kill: boolean; crit: boolean; point: THREE.Vector3; enemy?: Enemy } {
+  ): { hit: boolean; kill: boolean; crit: boolean; point: THREE.Vector3; enemy?: Enemy; remote?: NetTarget } {
     const worldHit = this.world.raycast(origin, dir, maxDist);
     let bestDist = worldHit ? worldHit.dist : maxDist;
     let best: { e: Enemy; part: "head" | "body"; t: number } | null = null;
@@ -439,8 +444,38 @@ export class Combat {
         best = { e, part: "body", t: bt };
       }
     }
+    // players are tested against the same running bestDist, so whoever is in
+    // front wins regardless of whether they are a bot or a person
+    let bestR: { r: NetTarget; part: "head" | "body"; t: number } | null = null;
+    for (const r of this.remotes) {
+      if (!r.alive) continue;
+      const ht = raySphere(origin, dir, r.headPos, 0.26 * r.scale, bestDist);
+      if (ht !== null && ht < bestDist) {
+        bestDist = ht;
+        bestR = { r, part: "head", t: ht };
+        best = null;
+      }
+      const bt = raySphere(origin, dir, r.center, 0.42 * r.scale, bestDist);
+      if (bt !== null && bt < bestDist) {
+        bestDist = bt;
+        bestR = { r, part: "body", t: bt };
+        best = null;
+      }
+    }
     const point = origin.clone().addScaledVector(dir, bestDist);
     this.tracer(origin, point);
+    if (bestR) {
+      let d = dmg;
+      if (falloff) {
+        const [near, far, min] = falloff;
+        if (bestR.t > near) d *= lerp(1, min, clamp((bestR.t - near) / (far - near), 0, 1));
+      }
+      const crit = bestR.part === "head";
+      if (crit) d *= headMul;
+      this.burst(point, crit ? INK.RED : bestR.r.ink, crit ? 10 : 5, 7);
+      this.onRemoteHit?.(bestR.r, d, crit, point);
+      return { hit: true, kill: false, crit, point, remote: bestR.r };
+    }
     if (best) {
       let d = dmg;
       if (falloff) {
@@ -481,6 +516,18 @@ export class Combat {
         this.onEnemyKilled(e, player);
       }
       if (headish) crit = true;
+    }
+    // the blade has to reach other players too, or it is dead weight in PvP
+    for (const r of this.remotes) {
+      if (!r.alive) continue;
+      const to = new THREE.Vector3().subVectors(r.center, origin);
+      const dist = to.length();
+      if (dist > range + 0.4) continue;
+      if (dist > 0.2 && to.normalize().dot(dir) < cosH) continue;
+      if (!this.world.hasLineOfSight(origin, r.center)) continue;
+      this.burst(r.center, INK.RED, 8, 8);
+      this.onRemoteHit?.(r, dmg, false, r.center.clone());
+      any = true;
     }
     return { hit: any, kill, crit };
   }
@@ -712,6 +759,8 @@ function lerp(a: number, b: number, t: number) {
 
 export function wavePlan(mode: Mode, wave: number): EnemyKind[] {
   const list: EnemyKind[] = [];
+  if (mode === "arena") return list; // players only
+
   if (mode === "district") {
     const n = 4 + wave * 2;
     for (let i = 0; i < n; i++) {

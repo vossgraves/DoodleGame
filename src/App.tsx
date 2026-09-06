@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Game, type GameState, type HudSnap } from "./game/engine";
 import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
 import { WEAPONS, sanitizeLoadout, type WeaponKind } from "./game/player";
+import { SCORE_TARGET, type MatchMode, type MatchNet } from "./game/match";
 
 type Screen = "menu" | "howto" | "settings" | "loadout" | "game";
 
@@ -65,6 +66,10 @@ export default function App() {
   const [mode, setMode] = useState<Mode>("district");
   const [mapKey, setMapKey] = useState(() => localStorage.getItem("doodle_map") || DEFAULT_MAP);
   const [loadout, setLoadout] = useState<WeaponKind[]>(loadLoadout);
+  const [playerName, setPlayerName] = useState(() => localStorage.getItem("doodle_name") || "");
+  const [matchMode, setMatchMode] = useState<MatchMode>("ffa");
+  // MatchNet lives outside React; bump this to re-read it
+  const [netTick, setNetTick] = useState(0);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
   const [gstate, setGstate] = useState<GameState>("playing");
   const [touch, setTouch] = useState(false);
@@ -104,7 +109,16 @@ export default function App() {
       hudLatest.current = h;
     };
     g.onState = (s) => setGstate(s);
+    g.onNet = () => setNetTick((n) => n + 1);
+    g.match.name = (playerName || "doodle").slice(0, 14);
+    g.match.mapKey = mapKey;
+    g.match.mode = matchMode;
     g.input.onLockChange = (l) => setLocked(l);
+    // Opt-in inspection handle. A P2P lobby has no server to look at, so this is
+    // the only way to see what your client actually believes about a live match.
+    if (localStorage.getItem("doodle_debug") === "1") {
+      (window as unknown as { __doodle?: Game }).__doodle = g;
+    }
     g.start();
     const id = window.setInterval(() => setHud({ ...hudLatest.current }), 50);
     return () => {
@@ -154,6 +168,7 @@ export default function App() {
           onHow={() => setScreen("howto")}
           onSettings={() => setScreen("settings")}
           onLoadout={() => setScreen("loadout")}
+          onOnline={() => launch("arena")}
         />
       )}
       {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touch} />}
@@ -200,6 +215,21 @@ export default function App() {
             </div>
           )}
           {touch && gstate === "playing" && <TouchControls gameRef={gameRef} />}
+          {mode === "arena" && (
+            <Online
+              gameRef={gameRef}
+              tick={netTick}
+              name={playerName}
+              onName={(n) => {
+                setPlayerName(n);
+                localStorage.setItem("doodle_name", n);
+                if (gameRef.current) gameRef.current.match.name = (n || "doodle").slice(0, 14);
+              }}
+              matchMode={matchMode}
+              onMatchMode={setMatchMode}
+              onMenu={toMenu}
+            />
+          )}
           {gstate === "paused" && (
             <PauseOverlay
               onResume={() => gameRef.current?.resume()}
@@ -229,6 +259,7 @@ function Menu({
   onHow,
   onSettings,
   onLoadout,
+  onOnline,
 }: {
   bestD: number;
   bestZ: number;
@@ -239,6 +270,7 @@ function Menu({
   onHow: () => void;
   onSettings: () => void;
   onLoadout: () => void;
+  onOnline: () => void;
 }) {
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
@@ -290,7 +322,11 @@ function Menu({
           </button>
         </div>
 
-        <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+        <button className="ink-btn big mt-6" onClick={onOnline}>
+          play online
+        </button>
+
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
           <button className="ink-btn" onClick={onLoadout}>
             loadout
           </button>
@@ -431,6 +467,218 @@ function Settings({
         <button className="ink-btn mt-8" onClick={onBack}>
           back
         </button>
+      </div>
+    </div>
+  );
+}
+
+function Online({
+  gameRef,
+  tick,
+  name,
+  onName,
+  matchMode,
+  onMatchMode,
+  onMenu,
+}: {
+  gameRef: React.RefObject<Game | null>;
+  tick: number;
+  name: string;
+  onName: (n: string) => void;
+  matchMode: MatchMode;
+  onMatchMode: (m: MatchMode) => void;
+  onMenu: () => void;
+}) {
+  const [busy, setBusy] = useState("");
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const m: MatchNet | null = gameRef.current?.match ?? null;
+  void tick; // re-render trigger; the match object itself is mutable
+  if (!m) return null;
+
+  const run = async (label: string, fn: () => Promise<unknown>) => {
+    setBusy(label);
+    setErr("");
+    try {
+      await fn();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+    setBusy("");
+  };
+
+  // ---- in a match: a small, non-blocking score panel ----
+  if (m.state === "playing") {
+    const rows = m.scoreboard().slice(0, 4);
+    const target = SCORE_TARGET[m.mode];
+    const [blue, red] = m.teamScores();
+    return (
+      <div className="net-score hud-bit">
+        {m.mode === "tdm" ? (
+          <div className="flex items-center justify-center gap-3 text-2xl">
+            <b style={{ color: "var(--ink)" }}>{blue}</b>
+            <span className="text-base opacity-60">to {target}</span>
+            <b style={{ color: "var(--red)" }}>{red}</b>
+          </div>
+        ) : (
+          rows.map((r, i) => (
+            <div key={r.id} className={r.id === m.myId ? "me" : ""}>
+              <span className="rank">{i + 1}.</span>
+              <span>{r.name}</span>
+              <b>{r.kills}</b>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  }
+
+  // ---- match over ----
+  if (m.state === "over") {
+    return (
+      <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.72)]">
+        <div className="ink-panel max-w-[520px] px-10 py-8 text-center">
+          <h2 className="m-0 font-[Caveat,cursive] text-5xl text-[var(--red)]">{m.winner} wins</h2>
+          <div className="mt-4 text-left text-xl">
+            {m.scoreboard().map((r) => (
+              <div key={r.id} className="flex justify-between gap-6">
+                <span className={r.id === m.myId ? "text-[var(--red)]" : ""}>
+                  {r.name}
+                  {r.id === m.myId ? " (you)" : ""}
+                </span>
+                <span className="opacity-70">
+                  {r.kills} K · {r.deaths} D
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="mt-6 flex flex-col gap-3">
+            {m.isHost && (
+              <button className="ink-btn big" onClick={() => m.backToLobby()}>
+                back to the lobby
+              </button>
+            )}
+            <button className="ink-btn" onClick={onMenu}>
+              leave
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- in a lobby, waiting to start ----
+  if (m.state === "lobby") {
+    const rows = [...m.roster.values()];
+    return (
+      <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.72)] p-4">
+        <div className="ink-panel w-full max-w-[560px] px-8 py-7 text-center">
+          <h2 className="m-0 font-[Caveat,cursive] text-5xl">lobby</h2>
+          <p className="mt-1 text-2xl">
+            code <b className="tracking-[0.25em] text-[var(--red)]">{m.code}</b>
+          </p>
+          <p className="text-lg opacity-70">
+            {m.mode === "tdm" ? "team deathmatch" : "free-for-all"} · {MAPS.find((x) => x.key === m.mapKey)?.name}
+          </p>
+
+          <div className="mt-5 text-left text-xl">
+            {rows.map((r) => (
+              <div key={r.id} className="flex items-center justify-between border-b border-[var(--ink)] py-1 opacity-90">
+                <span>
+                  {r.name}
+                  {r.id === m.myId ? " (you)" : ""}
+                  {r.id === m.myId && m.isHost ? " · host" : ""}
+                </span>
+                {m.mode === "tdm" && (
+                  <span style={{ color: r.team === 0 ? "var(--ink)" : "var(--red)" }}>{r.team === 0 ? "BLUE" : "RED"}</span>
+                )}
+              </div>
+            ))}
+            {rows.length < 2 && <p className="mt-3 text-lg opacity-70">waiting for someone else to scribble in…</p>}
+          </div>
+
+          {err && <p className="mt-3 text-lg text-[var(--red)]">{err}</p>}
+          <div className="mt-6 flex flex-col gap-3">
+            {m.isHost ? (
+              <button className="ink-btn big red" onClick={() => m.requestStart()}>
+                start the match
+              </button>
+            ) : (
+              <p className="text-xl opacity-70">waiting for the host…</p>
+            )}
+            <button className="ink-btn" onClick={onMenu}>
+              leave
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- not connected yet ----
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.72)] p-4">
+      <div className="ink-panel w-full max-w-[560px] px-8 py-7 text-center">
+        <h2 className="m-0 font-[Caveat,cursive] text-5xl">play online</h2>
+        <p className="mt-1 text-lg opacity-70">no server — you connect straight to the other players</p>
+
+        <label className="mt-5 flex flex-col items-center gap-2 text-xl">
+          your name
+          <input
+            className="ink-input"
+            value={name}
+            maxLength={14}
+            placeholder="doodle"
+            onChange={(e) => onName(e.target.value)}
+          />
+        </label>
+
+        <div className="mt-4 flex items-center justify-center gap-2">
+          {(["ffa", "tdm"] as MatchMode[]).map((k) => (
+            <button
+              key={k}
+              className={`gun-chip ${matchMode === k ? "on" : ""}`}
+              onClick={() => {
+                onMatchMode(k);
+                m.mode = k;
+              }}
+            >
+              {k === "ffa" ? "FREE-FOR-ALL" : "TEAM DEATHMATCH"}
+            </button>
+          ))}
+        </div>
+
+        {err && <p className="mt-4 text-lg text-[var(--red)]">{err}</p>}
+        {busy && <p className="mt-4 text-lg opacity-70">{busy}…</p>}
+
+        <div className="mt-5 flex flex-col gap-3">
+          <button className="ink-btn big" disabled={!!busy} onClick={() => run("looking for a lobby", () => m.quickJoin())}>
+            quick play
+          </button>
+          <div className="flex gap-2">
+            <button className="ink-btn flex-1" disabled={!!busy} onClick={() => run("opening a lobby", () => m.host(true, m.mapKey, matchMode))}>
+              host public
+            </button>
+            <button className="ink-btn flex-1" disabled={!!busy} onClick={() => run("opening a lobby", () => m.host(false, m.mapKey, matchMode))}>
+              host private
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="ink-input flex-1 tracking-[0.2em] uppercase"
+              value={code}
+              maxLength={5}
+              placeholder="CODE"
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+            />
+            <button className="ink-btn" disabled={!!busy || code.length < 5} onClick={() => run("joining", () => m.join(code))}>
+              join
+            </button>
+          </div>
+          <button className="ink-btn" onClick={onMenu}>
+            back
+          </button>
+        </div>
       </div>
     </div>
   );

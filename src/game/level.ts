@@ -3,7 +3,8 @@ import { World } from "./physics";
 import { INK, makeInkMaterial } from "./renderer";
 import { rand } from "./math";
 
-export type Mode = "district" | "zombies";
+/** district/zombies are the PvE wave modes; arena is player-vs-player. */
+export type Mode = "district" | "zombies" | "arena";
 
 export interface Level {
   key: string;

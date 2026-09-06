@@ -5,6 +5,8 @@ import { Input } from "./input";
 import { AudioSys } from "./audio";
 import { buildLevel, disposeLevel, DEFAULT_MAP, type Level, type Mode } from "./level";
 import { Player, type Weapon, type WeaponKind } from "./player";
+import { MatchNet } from "./match";
+import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
 import { clamp } from "./math";
 
@@ -119,6 +121,9 @@ export class Game {
   hud: HudSnap = defaultHud();
   onHud: ((h: HudSnap) => void) | null = null;
   onState: ((s: GameState) => void) | null = null;
+  /** fires when the lobby roster, scores or match state change */
+  onNet: (() => void) | null = null;
+  match!: MatchNet;
   private raf = 0;
   private last = 0;
   private msgT = 0;
@@ -152,6 +157,42 @@ export class Game {
       loadout,
     });
     this.player.reset(this.level.playerStart);
+
+    this.match = new MatchNet({
+      scene: this.R.scene,
+      snapshot: () =>
+        encodeLocal(
+          {
+            pos: this.player.pos,
+            vel: this.player.vel,
+            yaw: this.player.yaw,
+            pitch: this.player.pitch,
+            hp: this.player.hp,
+            alive: this.player.alive,
+            crouching: this.player.crouching,
+            sliding: this.player.sliding,
+            onGround: this.player.onGround,
+            aiming: this.player.aiming,
+            weaponIndex: this.player.weaponIndex,
+            weapon: this.player.weapon,
+          },
+          this.match.isFiring,
+        ),
+      hurt: (amount, from) => this.player.takeDamage(amount, from),
+      respawn: (pos) => {
+        this.player.reset(pos);
+        this.state = "playing";
+        this.onState?.("playing");
+      },
+      spawnPoints: () => this.level.spawns,
+      localPos: () => this.player.pos,
+      localAlive: () => this.player.alive,
+      feed: (text, pts) => this.addScore(pts, text),
+      announce: (m, s) => this.announce(m, s),
+      changed: () => this.onNet?.(),
+    });
+    // a hit on another player is reported to them; their client applies it
+    this.combat.onRemoteHit = (t, dmg, crit) => this.match.reportHit(t.id, dmg, this.player.eye, crit);
     this.audio.setTune(mode === "zombies" ? "zombies" : "district");
     const sens = Number(localStorage.getItem("doodle_sens") || 100);
     const invert = localStorage.getItem("doodle_invert") === "1";
@@ -174,9 +215,18 @@ export class Game {
     this.audio.ensure();
     this.audio.startMusic();
     this.last = performance.now();
-    this.beginWave();
+    if (this.mode === "arena") {
+      // no waves in PvP; the lobby decides when the match begins
+      this.state = "playing";
+      this.announce("THE ARENA", "waiting for the lobby");
+    } else {
+      this.beginWave();
+      this.announce(
+        this.mode === "zombies" ? "THEY RISE" : "INK SPILLS",
+        this.mode === "zombies" ? "don't let them touch you" : "erase the doodles",
+      );
+    }
     if (!this.input.isTouch) this.input.requestLock();
-    this.announce(this.mode === "zombies" ? "THEY RISE" : "INK SPILLS", this.mode === "zombies" ? "don't let them touch you" : "erase the doodles");
     this.tip(this.input.isTouch ? "joystick move · drag look · hold FIRE" : "WASD move · mouse look · click shoot", 4);
     this.loop(this.last);
   }
@@ -219,6 +269,7 @@ export class Game {
 
   private handleFire(w: Weapon, origin: THREE.Vector3, dir: THREE.Vector3, ads: boolean) {
     const spread = (ads ? w.def.adsSpread : w.spreadCur) + Math.hypot(this.player.vel.x, this.player.vel.z) * 0.0012;
+    this.match.markFiring();
     let any = false,
       kill = false,
       crit = false;
@@ -289,6 +340,12 @@ export class Game {
   }
 
   private handleDeath() {
+    // online you come back; the match, not the run, is what ends
+    if (this.match.inMatch) {
+      this.match.reportDeath();
+      this.announce("ERASED", "back on the page shortly");
+      return;
+    }
     this.state = "dead";
     this.announce("ERASED", this.mode === "zombies" ? "the page is overrun" : "the doodles won");
     this.audio.stopMusic();
@@ -332,13 +389,19 @@ export class Game {
     if (this.state === "playing" || this.state === "intermission") {
       this.time += dt;
       this.player.update(dt);
+      if (this.match.online) {
+        this.match.update(dt);
+        this.combat.remotes = this.match.targets();
+      } else if (this.combat.remotes.length) {
+        this.combat.remotes = [];
+      }
       this.combat.update(dt, this.player, this.time);
       for (const a of this.level.animated) a.update(this.time);
 
       this.comboT -= dt;
       if (this.comboT <= 0) this.combo = 0;
 
-      if (this.state === "playing" && this.player.alive) {
+      if (this.state === "playing" && this.player.alive && this.mode !== "arena") {
         this.spawnT -= dt;
         if (this.spawnT <= 0 && this.queue.length) {
           this.spawnOne();
@@ -425,6 +488,7 @@ export class Game {
     this.input.exitLock();
     this.audio.stopMusic();
     this.combat.clear();
+    this.match.leave();
     disposeLevel(this.R.scene, this.level);
     this.R.dispose();
   }
