@@ -560,6 +560,29 @@ canvas.game-canvas {
   opacity: 1;
 }
 
+/* classic stacks ammo over health; codm sets them side by side with the ammo
+   big on the right, which is what the reference layout does */
+.m-row {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 5px;
+}
+.hud-root.codm .m-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+.hud-root.codm .m-hp {
+  flex: 1;
+  min-width: 0;
+}
+.hud-root.codm .m-ammo b {
+  font-size: 40px;
+}
+.hud-root.codm .m-weapons {
+  justify-content: flex-end;
+}
+
 .m-ammo {
   display: flex;
   align-items: center;

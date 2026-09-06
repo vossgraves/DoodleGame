@@ -128,6 +128,7 @@ export default function App() {
   const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
   const [adsToggle, setAdsToggle] = useState(localStorage.getItem("doodle_ads_toggle") === "1");
+  const [hudPreset, setHudPreset] = useState(() => localStorage.getItem("doodle_hud") || "codm");
   const [hitInk, setHitInk] = useState(() => readInkSetting("doodle_hit_ink", 1));
   const [tracerInk, setTracerInk] = useState(() => readInkSetting("doodle_tracer_ink", 3));
   const [quality, setQuality] = useState<Quality>(() => {
@@ -357,6 +358,11 @@ export default function App() {
             setTracerInk(v);
             localStorage.setItem("doodle_tracer_ink", String(v));
           }}
+          hudPreset={hudPreset}
+          onHudPreset={(v) => {
+            setHudPreset(v);
+            localStorage.setItem("doodle_hud", v);
+          }}
           adsToggle={adsToggle}
           onAdsToggle={(v) => {
             setAdsToggle(v);
@@ -373,7 +379,7 @@ export default function App() {
 
       {screen === "game" && (
         <>
-          <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} touch={touch} />
+          <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} touch={touch} preset={hudPreset} />
           {!touch && gstate === "playing" && !locked && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(246,243,230,0.35)]"
@@ -661,6 +667,8 @@ function Settings({
   tracerInk,
   onHitInk,
   onTracerInk,
+  hudPreset,
+  onHudPreset,
   adsToggle,
   onAdsToggle,
   quality,
@@ -677,6 +685,8 @@ function Settings({
   tracerInk: number;
   onHitInk: (v: number) => void;
   onTracerInk: (v: number) => void;
+  hudPreset: string;
+  onHudPreset: (v: string) => void;
   adsToggle: boolean;
   onAdsToggle: (v: boolean) => void;
   quality: Quality;
@@ -688,6 +698,19 @@ function Settings({
       <div className="ink-panel mx-auto w-full max-w-[520px] px-8 py-7 text-center">
         <h2 className="m-0 font-[Caveat,cursive] text-5xl">settings</h2>
         <div className="mt-6 flex flex-col items-center gap-5 text-2xl">
+          <div className="flex flex-col items-center gap-2">
+            <span>hud layout</span>
+            <div className="flex flex-wrap justify-center gap-2">
+              {[
+                ["codm", "modern"],
+                ["classic", "classic"],
+              ].map(([k, label]) => (
+                <button key={k} className={`gun-chip ${hudPreset === k ? "on" : ""}`} onClick={() => onHudPreset(k)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="flex flex-col items-center gap-2">
             <span>graphics</span>
             <div className="flex flex-wrap justify-center gap-2">
@@ -1336,12 +1359,12 @@ function Bullet() {
   );
 }
 
-function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boolean }) {
+function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; touch: boolean; preset: string }) {
   const magN = Number(hud.mag);
   const ticks = Number.isFinite(magN) ? Math.min(magN, 40) : 0;
   if (hidden) return null;
   return (
-    <div className={`hud-root playing ${hud.low ? "low" : ""} ${touch ? "touch" : ""}`}>
+    <div className={`hud-root playing ${hud.low ? "low" : ""} ${touch ? "touch" : ""} ${preset}`}>
       <div className={`scope ${hud.ads && hud.weapon === "SNIPER" ? "on" : ""}`}>
         <div className="mask" />
         <div className="ring" />
@@ -1418,22 +1441,25 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
               </div>
             ))}
           </div>
-          <div className="m-ammo">
-            <Bullet />
-            <b>{hud.mag}</b>
-            <span>{hud.reserve}</span>
-            {hud.reloading && <em>reloading…</em>}
-            <span className="nades">
-              {Array.from({ length: hud.nades }).map((_, i) => (
-                <i key={i} />
-              ))}
-            </span>
-          </div>
-          <div className="m-hp">
-            <div className="bar">
-              <div className="fill" style={{ width: `${(hud.hp / hud.maxHp) * 100}%` }} />
+          {/* one DOM, two arrangements: the preset only changes .m-row's axis */}
+          <div className="m-row">
+            <div className="m-hp">
+              <div className="bar">
+                <div className="fill" style={{ width: `${(hud.hp / hud.maxHp) * 100}%` }} />
+              </div>
+              <span>{Math.ceil(hud.hp)}</span>
             </div>
-            <span>{Math.ceil(hud.hp)}</span>
+            <div className="m-ammo">
+              <Bullet />
+              <b>{hud.mag}</b>
+              <span>{hud.reserve}</span>
+              {hud.reloading && <em>reloading…</em>}
+              <span className="nades">
+                {Array.from({ length: hud.nades }).map((_, i) => (
+                  <i key={i} />
+                ))}
+              </span>
+            </div>
           </div>
         </div>
       ) : (
