@@ -10,6 +10,21 @@ type Screen = "menu" | "howto" | "settings" | "loadout" | "account" | "game";
 const GUNS = WEAPONS.filter((w) => w.isGun);
 const isGun = (k: WeaponKind) => GUNS.some((g) => g.kind === k);
 
+/** The six inks the art style is built from — indexes match INK in renderer.ts. */
+const INK_SWATCHES = [
+  { ink: 0, name: "blue", hex: "#1a30c0" },
+  { ink: 1, name: "red", hex: "#d02030" },
+  { ink: 2, name: "black", hex: "#2d3342" },
+  { ink: 3, name: "orange", hex: "#eb8c14" },
+  { ink: 4, name: "green", hex: "#1f9950" },
+  { ink: 5, name: "pink", hex: "#e666a8" },
+];
+
+function readInkSetting(key: string, fallback: number) {
+  const v = Number(localStorage.getItem(key));
+  return Number.isInteger(v) && v >= 0 && v <= 5 ? v : fallback;
+}
+
 function loadLoadout(): WeaponKind[] {
   try {
     return sanitizeLoadout(JSON.parse(localStorage.getItem("doodle_loadout") || "null"));
@@ -79,6 +94,8 @@ export default function App() {
   const [sens, setSens] = useState(Number(localStorage.getItem("doodle_sens") || 100));
   const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
+  const [hitInk, setHitInk] = useState(() => readInkSetting("doodle_hit_ink", 1));
+  const [tracerInk, setTracerInk] = useState(() => readInkSetting("doodle_tracer_ink", 3));
   const [bestD, setBestD] = useState(Number(localStorage.getItem("doodle_best") || 0));
   const [bestZ, setBestZ] = useState(Number(localStorage.getItem("doodle_zbest") || 0));
   const [runId, setRunId] = useState(0);
@@ -88,6 +105,20 @@ export default function App() {
   useEffect(() => {
     setTouch(isTouchDevice());
   }, []);
+
+  // the hitmarker is CSS, so the chosen hit colour rides in as a variable
+  useEffect(() => {
+    const hex = INK_SWATCHES[hitInk]?.hex;
+    if (hex) document.documentElement.style.setProperty("--hit", hex);
+  }, [hitInk]);
+
+  // live-apply the colours to a running match without a restart
+  useEffect(() => {
+    const g = gameRef.current;
+    if (!g) return;
+    g.combat.hitInk = hitInk;
+    g.combat.tracerInk = tracerInk;
+  }, [hitInk, tracerInk, runId, screen]);
 
   // Resume a saved session if there is one. No backend just means stay signed out.
   useEffect(() => {
@@ -243,13 +274,23 @@ export default function App() {
             setMusic(v);
             localStorage.setItem("doodle_music", v ? "1" : "0");
           }}
+          hitInk={hitInk}
+          tracerInk={tracerInk}
+          onHitInk={(v) => {
+            setHitInk(v);
+            localStorage.setItem("doodle_hit_ink", String(v));
+          }}
+          onTracerInk={(v) => {
+            setTracerInk(v);
+            localStorage.setItem("doodle_tracer_ink", String(v));
+          }}
           onBack={() => setScreen("menu")}
         />
       )}
 
       {screen === "game" && (
         <>
-          <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} />
+          <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} touch={touch} />
           {!touch && gstate === "playing" && !locked && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(246,243,230,0.35)]"
@@ -480,6 +521,26 @@ function HowTo({ onBack, touch }: { onBack: () => void; touch: boolean }) {
   );
 }
 
+function InkPicker({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2">
+      <span>{label}</span>
+      <div className="flex gap-2">
+        {INK_SWATCHES.map((s) => (
+          <button
+            key={s.ink}
+            className={`swatch ${value === s.ink ? "on" : ""}`}
+            style={{ background: s.hex }}
+            onClick={() => onChange(s.ink)}
+            aria-label={s.name}
+            title={s.name}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Settings({
   sens,
   invert,
@@ -487,6 +548,10 @@ function Settings({
   onSens,
   onInvert,
   onMusic,
+  hitInk,
+  tracerInk,
+  onHitInk,
+  onTracerInk,
   onBack,
 }: {
   sens: number;
@@ -495,13 +560,19 @@ function Settings({
   onSens: (n: number) => void;
   onInvert: (v: boolean) => void;
   onMusic: (v: boolean) => void;
+  hitInk: number;
+  tracerInk: number;
+  onHitInk: (v: number) => void;
+  onTracerInk: (v: number) => void;
   onBack: () => void;
 }) {
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
-      <div className="ink-panel w-full max-w-[520px] px-8 py-7 text-center">
+    <div className="absolute inset-0 z-10 overflow-y-auto p-4 paper-bg">
+      <div className="ink-panel mx-auto w-full max-w-[520px] px-8 py-7 text-center">
         <h2 className="m-0 font-[Caveat,cursive] text-5xl">settings</h2>
         <div className="mt-6 flex flex-col items-center gap-5 text-2xl">
+          <InkPicker label="hit colour" value={hitInk} onChange={onHitInk} />
+          <InkPicker label="fire projection" value={tracerInk} onChange={onTracerInk} />
           <label className="flex flex-col items-center gap-2">
             look sensitivity {sens}%
             <input className="ink-range" type="range" min={40} max={200} value={sens} onChange={(e) => onSens(Number(e.target.value))} />
@@ -943,12 +1014,25 @@ function LoadoutScreen({
   );
 }
 
-function HUD({ hud, hidden }: { hud: HudSnap; hidden: boolean }) {
+/** Rounded rifle round, PUBG-style, so the ammo count reads at a glance. */
+function Bullet() {
+  return (
+    <svg className="bullet" viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        d="M12 1.5c2.7 2.2 4.2 4.9 4.2 7.6v9.6c0 1.1-1.2 1.8-4.2 1.8s-4.2-.7-4.2-1.8V9.1c0-2.7 1.5-5.4 4.2-7.6z"
+        fill="currentColor"
+      />
+      <path d="M7.9 12.4h8.3" stroke="rgba(246,243,230,0.85)" strokeWidth="1.5" fill="none" />
+    </svg>
+  );
+}
+
+function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boolean }) {
   const magN = Number(hud.mag);
   const ticks = Number.isFinite(magN) ? Math.min(magN, 40) : 0;
   if (hidden) return null;
   return (
-    <div className={`hud-root playing ${hud.low ? "low" : ""}`}>
+    <div className={`hud-root playing ${hud.low ? "low" : ""} ${touch ? "touch" : ""}`}>
       <div className={`scope ${hud.ads && hud.weapon === "SNIPER" ? "on" : ""}`}>
         <div className="mask" />
         <div className="ring" />
@@ -1000,41 +1084,78 @@ function HUD({ hud, hidden }: { hud: HudSnap; hidden: boolean }) {
         </div>
       )}
 
-      <div className="hud-bl hud-bit">
-        <div className="mb-2 flex items-center gap-2 text-2xl">
-          <span>HP</span>
-          <div className="bar">
-            <div className="fill" style={{ width: `${(hud.hp / hud.maxHp) * 100}%` }} />
-          </div>
-          <span>{Math.ceil(hud.hp)}</span>
-        </div>
-        <div className="ammo">
-          <b>{hud.mag}</b>
-          <span>{hud.reserve}</span>
-          {hud.reloading && <span className="ml-2 text-[var(--red)]">reloading…</span>}
-          <span className="nades ml-3">
-            {Array.from({ length: hud.nades }).map((_, i) => (
-              <i key={i} />
+      {touch ? (
+        /* Everything lives in the strip between the two thumb zones, so nothing
+           can sit under the stick or the fire button. */
+        <div className="m-deck hud-bit">
+          <div className="m-weapons">
+            {hud.slots.map((s, i) => (
+              /* only the equipped gun is named; the rest stay as numbered stubs
+                 so the row cannot outgrow the space between the thumbs */
+              <div key={s.name} className={`m-wep ${s.active ? "on" : ""} ${s.empty ? "empty" : ""}`}>
+                <span className="n">{i + 1}</span>
+                {s.active && <span className="nm">{s.name}</span>}
+                <span className="am">{s.ammo}</span>
+              </div>
             ))}
-          </span>
-        </div>
-        <div className="tally">
-          {Array.from({ length: ticks }).map((_, i) => (
-            <i key={i} />
-          ))}
-        </div>
-      </div>
-      <div className="hud-br hud-bit">
-        <div className="mb-1 flex flex-col items-end">
-          {hud.slots.map((s, i) => (
-            <div key={s.name} className={`slot ${s.active ? "active" : ""} ${s.empty ? "empty" : ""}`}>
-              {i + 1} {s.name} <span className="text-base opacity-70">{s.ammo}</span>
+          </div>
+          <div className="m-ammo">
+            <Bullet />
+            <b>{hud.mag}</b>
+            <span>{hud.reserve}</span>
+            {hud.reloading && <em>reloading…</em>}
+            <span className="nades">
+              {Array.from({ length: hud.nades }).map((_, i) => (
+                <i key={i} />
+              ))}
+            </span>
+          </div>
+          <div className="m-hp">
+            <div className="bar">
+              <div className="fill" style={{ width: `${(hud.hp / hud.maxHp) * 100}%` }} />
             </div>
-          ))}
+            <span>{Math.ceil(hud.hp)}</span>
+          </div>
         </div>
-        <div className="text-3xl">{hud.weapon}</div>
-        <div className="text-lg opacity-70">{hud.hint}</div>
-      </div>
+      ) : (
+        <>
+          <div className="hud-bl hud-bit">
+            <div className="mb-2 flex items-center gap-2 text-2xl">
+              <span>HP</span>
+              <div className="bar">
+                <div className="fill" style={{ width: `${(hud.hp / hud.maxHp) * 100}%` }} />
+              </div>
+              <span>{Math.ceil(hud.hp)}</span>
+            </div>
+            <div className="ammo">
+              <b>{hud.mag}</b>
+              <span>{hud.reserve}</span>
+              {hud.reloading && <span className="ml-2 text-[var(--red)]">reloading…</span>}
+              <span className="nades ml-3">
+                {Array.from({ length: hud.nades }).map((_, i) => (
+                  <i key={i} />
+                ))}
+              </span>
+            </div>
+            <div className="tally">
+              {Array.from({ length: ticks }).map((_, i) => (
+                <i key={i} />
+              ))}
+            </div>
+          </div>
+          <div className="hud-br hud-bit">
+            <div className="mb-1 flex flex-col items-end">
+              {hud.slots.map((s, i) => (
+                <div key={s.name} className={`slot ${s.active ? "active" : ""} ${s.empty ? "empty" : ""}`}>
+                  {i + 1} {s.name} <span className="text-base opacity-70">{s.ammo}</span>
+                </div>
+              ))}
+            </div>
+            <div className="text-3xl">{hud.weapon}</div>
+            <div className="text-lg opacity-70">{hud.hint}</div>
+          </div>
+        </>
+      )}
 
       <div className={`focus-meter hud-bit ${hud.katana ? "on" : ""} ${hud.focusReady ? "ready" : ""}`}>
         <div className="text-[10px] tracking-widest">KATANA</div>
@@ -1047,7 +1168,7 @@ function HUD({ hud, hidden }: { hud: HudSnap; hidden: boolean }) {
         {hud.message && <div className="msg-main show">{hud.message}</div>}
         {hud.sub && <div className="msg-sub">{hud.sub}</div>}
       </div>
-      <div className="absolute bottom-[16%] left-0 right-0 text-center text-2xl hud-bit">{hud.tip}</div>
+      <div className="hud-tip absolute left-0 right-0 text-center text-2xl hud-bit">{hud.tip}</div>
       <div className="killfeed hud-bit">
         {hud.killFeed.map((k) => (
           <div key={k.id}>

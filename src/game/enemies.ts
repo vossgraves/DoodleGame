@@ -311,8 +311,31 @@ export class Combat {
     return e;
   }
 
+  /** Colour of the spark when you land a hit, and of the shot trail. Both are
+      player settings, so they are uniforms rather than baked into a material. */
+  hitInk: number = INK.RED;
+  private _tracerInk: number = INK.ORANGE;
+  get tracerInk() {
+    return this._tracerInk;
+  }
+  set tracerInk(v: number) {
+    this._tracerInk = v;
+    this.tracerMat.uniforms.uInk.value = v;
+  }
+
+  private burstMats = new Map<number, THREE.ShaderMaterial>();
+  private burstMat(ink: number) {
+    let m = this.burstMats.get(ink);
+    if (!m) {
+      m = makeInkMaterial({ ink, fill: true });
+      this.burstMats.set(ink, m);
+    }
+    return m;
+  }
+
   burst(pos: THREE.Vector3, ink: number, n = 10, speed = 6) {
-    const mat = makeInkMaterial({ ink, fill: true });
+    // cached: this used to build a fresh shader on every single hit
+    const mat = this.burstMat(ink);
     for (let i = 0; i < n; i++) {
       const m = new THREE.Mesh(this.pGeo, mat);
       m.position.copy(pos);
@@ -325,11 +348,11 @@ export class Combat {
     }
   }
 
-  tracer(from: THREE.Vector3, to: THREE.Vector3, ink: number = INK.ORANGE) {
+  tracer(from: THREE.Vector3, to: THREE.Vector3, ink?: number) {
     const dist = from.distanceTo(to);
     const g = new THREE.CylinderGeometry(0.02, 0.012, dist, 4);
     g.rotateX(Math.PI / 2);
-    const m = new THREE.Mesh(g, ink === INK.ORANGE ? this.tracerMat : makeInkMaterial({ ink, fill: true }));
+    const m = new THREE.Mesh(g, ink === undefined ? this.tracerMat : this.burstMat(ink));
     m.position.copy(from).lerp(to, 0.5);
     m.lookAt(to);
     this.scene.add(m);
@@ -472,7 +495,7 @@ export class Combat {
       }
       const crit = bestR.part === "head";
       if (crit) d *= headMul;
-      this.burst(point, crit ? INK.RED : bestR.r.ink, crit ? 10 : 5, 7);
+      this.burst(point, this.hitInk, crit ? 10 : 5, 7);
       this.onRemoteHit?.(bestR.r, d, crit, point);
       return { hit: true, kill: false, crit, point, remote: bestR.r };
     }
@@ -485,7 +508,7 @@ export class Combat {
       const crit = best.part === "head";
       if (crit) d *= headMul;
       const killed = best.e.takeDamage(d, player.eye, crit ? 4.5 : 2.2);
-      this.burst(point, crit ? INK.RED : best.e.def.ink, crit ? 10 : 5, 7);
+      this.burst(point, this.hitInk, crit ? 10 : 5, 7);
       if (killed) this.onEnemyKilled(best.e, player);
       return { hit: true, kill: killed, crit, point, enemy: best.e };
     }
@@ -509,7 +532,7 @@ export class Combat {
       const headish = e.headPos.y - origin.y < 0.4 && Math.abs(e.headPos.y - origin.y) < 0.5;
       const d = dmg * (headish ? 1.3 : 1);
       const killed = e.takeDamage(d, origin, heavy ? 10 : 5);
-      this.burst(e.center, INK.RED, 8, 8);
+      this.burst(e.center, this.hitInk, 8, 8);
       any = true;
       if (killed) {
         kill = true;
@@ -525,7 +548,7 @@ export class Combat {
       if (dist > range + 0.4) continue;
       if (dist > 0.2 && to.normalize().dot(dir) < cosH) continue;
       if (!this.world.hasLineOfSight(origin, r.center)) continue;
-      this.burst(r.center, INK.RED, 8, 8);
+      this.burst(r.center, this.hitInk, 8, 8);
       this.onRemoteHit?.(r, dmg, false, r.center.clone());
       any = true;
     }

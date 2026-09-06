@@ -276,7 +276,8 @@ canvas.game-canvas {
   position: absolute;
   width: 2.5px;
   height: 28px;
-  background: var(--ink);
+  /* --hit follows the player's chosen hit colour */
+  background: var(--hit, var(--ink));
   left: -1.25px;
   top: -14px;
 }
@@ -487,6 +488,144 @@ canvas.game-canvas {
   border-color: var(--red);
   color: var(--red);
   background: rgba(208, 32, 48, 0.1);
+}
+
+.hud-tip {
+  bottom: 16%;
+}
+
+.swatch {
+  width: 34px;
+  height: 34px;
+  border: 3px solid var(--ink);
+  border-radius: 10px 7px 11px 8px / 8px 11px 7px 10px;
+  cursor: pointer;
+  padding: 0;
+}
+.swatch.on {
+  outline: 3px solid var(--red);
+  outline-offset: 2px;
+}
+
+/* ---- mobile HUD -------------------------------------------------------
+   The thumbs own the bottom corners, so the readouts live in the free strip
+   between them rather than underneath the stick and the fire button. */
+.m-deck {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  /* the thumb clusters take roughly 245px on the left and 235px on the right,
+     so size to what is actually left rather than to a flat fraction */
+  width: min(400px, calc(100vw - 500px));
+  min-width: 176px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.m-weapons {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+.m-wep {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  border: 2px solid var(--ink);
+  border-radius: 8px 6px 9px 7px / 7px 9px 6px 8px;
+  padding: 1px 6px;
+  background: rgba(246, 243, 230, 0.45);
+  opacity: 0.5;
+}
+.m-wep.on {
+  opacity: 1;
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(208, 32, 48, 0.1);
+}
+.m-wep .n {
+  font-size: 11px;
+  opacity: 0.6;
+}
+.m-wep .nm {
+  font-size: 14px;
+}
+.m-wep .am {
+  font-size: 11px;
+  opacity: 0.75;
+}
+.m-wep.empty .am {
+  color: var(--red);
+  opacity: 1;
+}
+
+.m-ammo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  line-height: 1;
+}
+.m-ammo .bullet {
+  width: 15px;
+  height: 21px;
+  color: var(--ink);
+}
+.m-ammo b {
+  font-size: 34px;
+}
+.m-ammo > span {
+  font-size: 18px;
+  opacity: 0.75;
+}
+.m-ammo em {
+  font-style: normal;
+  font-size: 15px;
+  color: var(--red);
+}
+
+.m-hp {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.m-hp .bar {
+  flex: 1;
+  width: auto;
+  height: 13px;
+}
+.m-hp span {
+  font-size: 17px;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* the corners shrink so they clear the pause button and the score panel */
+.hud-root.touch .hud-tl,
+.hud-root.touch .hud-tr {
+  font-size: 19px;
+  top: 2%;
+}
+.hud-root.touch .hud-tr {
+  right: 72px;
+}
+.hud-root.touch .killfeed {
+  font-size: 16px;
+  top: 18%;
+  right: 72px;
+}
+.hud-root.touch .hud-tip {
+  bottom: 44%;
+  font-size: 17px;
+}
+.hud-root.touch .focus-meter {
+  left: 8px;
+  right: auto;
+  bottom: 46%;
+}
+.hud-root.touch .bossbar {
+  top: 12%;
 }
 
 .ink-input {

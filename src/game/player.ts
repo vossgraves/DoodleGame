@@ -294,6 +294,9 @@ export function sanitizeLoadout(raw: unknown): WeaponKind[] {
   return [...guns, melee];
 }
 
+/** How long a weapon takes to swing up after a switch. */
+export const EQUIP_DUR = 0.34;
+
 function bx(w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, parent: THREE.Object3D) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.position.set(x, y, z);
@@ -339,6 +342,8 @@ export class Weapon {
   slashT = 0;
   burstLeft = 0;
   burstT = 0;
+  /** counts down while the gun is being swung up into view */
+  equipT = 0;
   private ink: THREE.ShaderMaterial;
   private solid: THREE.ShaderMaterial;
   private orange: THREE.ShaderMaterial;
@@ -464,6 +469,7 @@ export class Weapon {
     this.root.visible = true;
     this.reloading = false;
     this.reloadT = 0;
+    this.equipT = EQUIP_DUR;
   }
   unequip() {
     this.root.visible = false;
@@ -489,6 +495,7 @@ export class Weapon {
     this.cycleT = Math.max(0, this.cycleT - dt);
     this.slashT = Math.max(0, this.slashT - dt);
     this.burstT = Math.max(0, this.burstT - dt);
+    this.equipT = Math.max(0, this.equipT - dt);
     this.spreadCur = damp(this.spreadCur, this.def.spread, 6, dt);
     if (this.flash.visible) {
       this.flash.rotateZ(dt * 18);
@@ -972,6 +979,16 @@ export class Player {
       -sprint * 0.5 + this.lookDelta.x * 0.4,
       this.lookDelta.x * -0.5 + this.recoilY.value * 0.02 + this.slideT * 0.1,
     );
+    // swing the new weapon up from below rather than popping it into frame
+    if (w.equipT > 0) {
+      const e = (w.equipT / EQUIP_DUR) ** 2;
+      p.x += e * 0.14;
+      p.y -= e * 0.55;
+      p.z += e * 0.18;
+      w.root.rotation.x += e * 1.05;
+      w.root.rotation.y += e * 0.35;
+      w.root.rotation.z += e * 0.6;
+    }
     if (w.def.kind === "sniper" && ads > 0.8) w.root.visible = false;
     else w.root.visible = this.alive;
     void dt;

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { InkRenderer } from "./renderer";
+import { InkRenderer, INK } from "./renderer";
 import { World } from "./physics";
 import { Input } from "./input";
 import { AudioSys } from "./audio";
@@ -145,6 +145,12 @@ export class Game {
     this.best = Number(localStorage.getItem(mode === "zombies" ? "doodle_zbest" : "doodle_best") || 0);
     this.level = buildLevel(this.R.scene, this.world, mode, mapKey);
     this.combat = new Combat(this.world, this.R.scene, this.audio);
+    const readInk = (key: string, fallback: number) => {
+      const v = Number(localStorage.getItem(key));
+      return Number.isInteger(v) && v >= 0 && v <= 5 ? v : fallback;
+    };
+    this.combat.hitInk = readInk("doodle_hit_ink", INK.RED);
+    this.combat.tracerInk = readInk("doodle_tracer_ink", INK.ORANGE);
     this.player = new Player({
       world: this.world,
       input: this.input,
