@@ -196,6 +196,13 @@ export class Game {
       localPos: () => this.player.pos,
       localAlive: () => this.player.alive,
       mapExtent: () => getMap(this.mapKey).half,
+      world: this.world,
+      localBody: () => ({
+        pos: this.player.pos,
+        center: this.player.center,
+        headPos: this.player.eye,
+        alive: this.player.alive,
+      }),
       spawnLoot: (items) => {
         for (const it of items) {
           this.combat.spawnPickup(it.kind, new THREE.Vector3(it.pos[0], it.pos[1], it.pos[2]));

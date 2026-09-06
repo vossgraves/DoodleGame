@@ -3,6 +3,7 @@ import { Game, type GameState, type HudSnap } from "./game/engine";
 import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
 import { WEAPONS, sanitizeLoadout, type WeaponKind } from "./game/player";
 import { SCORE_TARGET, type MatchMode, type MatchNet } from "./game/match";
+import type { BotSkill } from "./game/bot";
 import * as account from "./game/account";
 
 type Screen = "menu" | "howto" | "settings" | "loadout" | "account" | "game";
@@ -746,6 +747,8 @@ function Online({
   const [busy, setBusy] = useState("");
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
+  const [, setBump] = useState(0);
+  const bump = () => setBump((n) => n + 1);
   const m: MatchNet | null = gameRef.current?.match ?? null;
   void tick; // re-render trigger; the match object itself is mutable
   if (!m) return null;
@@ -857,6 +860,41 @@ function Online({
             {rows.length < 2 && <p className="mt-3 text-lg opacity-70">waiting for someone else to scribble in…</p>}
           </div>
 
+          {m.isHost && (
+            <div className="mt-4">
+              <div className="mb-1 text-lg uppercase tracking-widest opacity-60">bots</div>
+              <div className="flex flex-wrap justify-center gap-2">
+                {(["recruit", "regular", "veteran", "elite"] as BotSkill[]).map((k) => (
+                  <button
+                    key={k}
+                    className={`gun-chip ${m.botSkill === k ? "on" : ""}`}
+                    onClick={() => {
+                      m.botSkill = k;
+                      bump();
+                    }}
+                  >
+                    {k}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-lg">
+                <span className="opacity-70">fill to</span>
+                {[0, 4, 6, 8, 10].map((n) => (
+                  <button
+                    key={n}
+                    className={`gun-chip ${m.fillTo === n ? "on" : ""}`}
+                    onClick={() => {
+                      m.fillTo = n;
+                      bump();
+                    }}
+                  >
+                    {n === 0 ? "off" : n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {err && <p className="mt-3 text-lg text-[var(--red)]">{err}</p>}
           <div className="mt-6 flex flex-col gap-3">
             {m.isHost ? (
@@ -912,8 +950,34 @@ function Online({
         {busy && <p className="mt-4 text-lg opacity-70">{busy}…</p>}
 
         <div className="mt-5 flex flex-col gap-3">
-          <button className="ink-btn big" disabled={!!busy} onClick={() => run("looking for a lobby", () => m.quickJoin())}>
+          <button
+            className="ink-btn big"
+            disabled={!!busy}
+            onClick={async () => {
+              setBusy("looking for a lobby");
+              setErr("");
+              try {
+                // hunts for real players for 40s, then opens a bot lobby
+                await m.quickPlay((s) => setBusy(s));
+              } catch (e) {
+                setErr(e instanceof Error ? e.message : String(e));
+              }
+              setBusy("");
+            }}
+          >
             quick play
+          </button>
+          <button
+            className="ink-btn"
+            disabled={!!busy}
+            onClick={() =>
+              run("opening a lobby", async () => {
+                await m.host(false, m.mapKey, matchMode);
+                m.fillTo = matchMode === "ffa" ? 8 : 10;
+              })
+            }
+          >
+            practice vs bots
           </button>
           <div className="flex gap-2">
             <button className="ink-btn flex-1" disabled={!!busy} onClick={() => run("opening a lobby", () => m.host(true, m.mapKey, matchMode))}>
@@ -1065,15 +1129,18 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
         </div>
         <div className="text-[var(--red)]">{hud.combo > 1 ? `combo x${hud.combo}` : ""}</div>
       </div>
-      <div className="hud-tr hud-bit">
-        <div>
-          {hud.waveLabel} <b>{hud.wave}</b>
+      {/* waves are a PvE idea; the arena has none */}
+      {hud.mode !== "arena" && (
+        <div className="hud-tr hud-bit">
+          <div>
+            {hud.waveLabel} <b>{hud.wave}</b>
+          </div>
+          <div className="text-[var(--red)]">{hud.modifier}</div>
+          <div>
+            <b>{hud.left}</b> {hud.mode === "zombies" ? "undead" : "enemies"} left
+          </div>
         </div>
-        <div className="text-[var(--red)]">{hud.modifier}</div>
-        <div>
-          <b>{hud.left}</b> {hud.mode === "zombies" ? "undead" : "enemies"} left
-        </div>
-      </div>
+      )}
 
       {hud.boss && (
         <div className="bossbar hud-bit">

@@ -9,7 +9,9 @@
 
 import * as THREE from "three";
 import { Net, type PeerMeta } from "./net";
-import { RemotePlayer, TEAM_INKS, FFA_INK, type Snapshot } from "./remote";
+import { RemotePlayer, encodeLocal, TEAM_INKS, FFA_INK, type Snapshot } from "./remote";
+import { Bot, BOT_NAMES, type BotCandidate, type BotSkill } from "./bot";
+import { raySphere, type World } from "./physics";
 
 export type MatchMode = "ffa" | "tdm" | "br";
 export type MatchState = "offline" | "lobby" | "playing" | "over";
@@ -26,6 +28,8 @@ const ZONE_PHASES = [
   { wait: 20, factor: 0.22 },
   { wait: 18, factor: 0.1 },
 ];
+/** how long quick play hunts for a real lobby before falling back to bots */
+export const MATCHMAKING_MS = 40_000;
 const ZONE_CLOSE_SPEED = 2.6;
 const ZONE_DPS = [3, 5, 8, 12, 18, 25];
 const ZONE_TICK = 0.6;
@@ -57,6 +61,8 @@ export interface RosterRow {
   deaths: number;
   /** battle royale only: eliminated, no respawn coming */
   out?: boolean;
+  /** filled by the host rather than a person */
+  bot?: boolean;
 }
 
 export interface MatchHooks {
@@ -73,6 +79,10 @@ export interface MatchHooks {
   /** half-extent of the current map, used to size the opening zone */
   mapExtent: () => number;
   spawnLoot: (items: LootItem[]) => void;
+  /** bots need the collision world to walk and shoot through */
+  world: World;
+  /** the local player as something a bot can aim at */
+  localBody: () => { pos: THREE.Vector3; center: THREE.Vector3; headPos: THREE.Vector3; alive: boolean };
   feed: (text: string, pts: number) => void;
   announce: (main: string, sub?: string) => void;
   /** roster/score/state changed — refresh any UI */
@@ -92,6 +102,14 @@ export class MatchNet {
   winner: string | null = null;
 
   zone: ZoneState = { cx: 0, cz: 0, r: 0, target: 0, phase: 0, wait: 0, active: false };
+
+  /** host only: the AI players filling out the match */
+  bots = new Map<string, Bot>();
+  /** rebuilt once a tick; every bot reads it many times per frame */
+  private candidateCache: BotCandidate[] = [];
+  botSkill: BotSkill = "regular";
+  /** how many players the host wants in the match, bots making up the shortfall */
+  fillTo = 0;
 
   private sendT = 0;
   private firing = false;
@@ -170,7 +188,33 @@ export class MatchNet {
     return this.net.code!;
   }
 
+  /**
+   * Hunt for a real lobby, and if nobody answers inside the matchmaking window,
+   * open one of our own and fill it with bots rather than leaving you waiting.
+   */
+  async quickPlay(onStatus?: (s: string) => void): Promise<"joined" | "bots"> {
+    const deadline = Date.now() + MATCHMAKING_MS;
+    let tries = 0;
+    while (Date.now() < deadline) {
+      tries++;
+      onStatus?.(tries === 1 ? "looking for a lobby" : `still looking · attempt ${tries}`);
+      try {
+        await this.quickJoin();
+        return "joined";
+      } catch {
+        /* nobody answered that round; keep knocking until the deadline */
+      }
+      if (Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+    onStatus?.("no one about — bringing in bots");
+    await this.host(true, this.mapKey, this.mode);
+    this.fillTo = this.mode === "ffa" ? 8 : 10;
+    return "bots";
+  }
+
   leave() {
+    this.clearBots();
     for (const r of this.remotes.values()) r.dispose();
     this.remotes.clear();
     this.roster.clear();
@@ -184,6 +228,7 @@ export class MatchNet {
   /** Host only: balance teams and drop everyone into the map. */
   start() {
     if (!this.net.isHost || this.state === "playing") return;
+    if (this.fillTo > 0) this.fillWithBots();
     this.assignTeams();
     for (const r of this.roster.values()) {
       r.kills = 0;
@@ -267,6 +312,143 @@ export class MatchNet {
       this.hooks.announce(this.mode === "tdm" ? "TEAM DEATHMATCH" : "DEATHMATCH", `first to ${SCORE_TARGET[this.mode]}`);
     }
     this.hooks.changed();
+  }
+
+  // ---- bots --------------------------------------------------------------
+
+  /** Everything a bot could shoot at: us, the real remotes, and the other bots. */
+  private botCandidates(): BotCandidate[] {
+    const out: BotCandidate[] = [];
+    const myId = this.net.id;
+    if (myId) {
+      const body = this.hooks.localBody();
+      out.push({
+        id: myId,
+        team: this.roster.get(myId)?.team ?? 0,
+        alive: body.alive,
+        pos: body.pos,
+        center: body.center,
+        headPos: body.headPos,
+      });
+    }
+    for (const [id, r] of this.remotes) {
+      // a bot's own RemotePlayer is presentation only; its Bot is the real thing
+      if (this.bots.has(id)) continue;
+      out.push({
+        id,
+        team: this.roster.get(id)?.team ?? 0,
+        alive: r.alive,
+        pos: r.pos,
+        center: r.center,
+        headPos: r.headPos,
+      });
+    }
+    for (const [id, b] of this.bots) {
+      out.push({ id, team: b.team, alive: b.alive, pos: b.pos, center: b.center, headPos: b.headPos });
+    }
+    return out;
+  }
+
+  /**
+   * Resolve a bot's shot properly rather than assuming it connects — the aim
+   * error in its skill profile is only meaningful if a miss can actually miss.
+   */
+  private botShoot(bot: Bot, origin: THREE.Vector3, dir: THREE.Vector3, damage: number, targetId: string) {
+    const t = this.candidateCache.find((c) => c.id === targetId);
+    if (!t || !t.alive) return;
+    const wall = this.hooks.world.raycast(origin, dir, 120);
+    const limit = wall ? wall.dist : 120;
+    const head = raySphere(origin, dir, t.headPos, 0.26, limit);
+    const body = head === null ? raySphere(origin, dir, t.center, 0.42, limit) : null;
+    if (head === null && body === null) return;
+    const dmg = head !== null ? damage * 2.2 : damage;
+
+    if (targetId === this.net.id) {
+      this.hooks.hurt(dmg, origin.clone());
+    } else if (this.bots.has(targetId)) {
+      this.damageBot(targetId, dmg, bot.id);
+    } else {
+      this.net.sendTo(targetId, "pdmg", {
+        amount: Math.round(dmg),
+        from: [+origin.x.toFixed(1), +origin.y.toFixed(1), +origin.z.toFixed(1)],
+        by: bot.id,
+      });
+    }
+  }
+
+  /** Host-side: apply damage to a bot and announce it if that killed them. */
+  private damageBot(botId: string, amount: number, by: string) {
+    const bot = this.bots.get(botId);
+    if (!bot || !bot.alive) return;
+    if (!this.canHurtBetween(this.teamOf(by), bot.team)) return;
+    if (!bot.takeDamage(amount, by)) return;
+
+    if (this.mode === "br") bot.respawns = false;
+    const row = this.roster.get(botId);
+    if (row) {
+      row.deaths += 1;
+      if (this.mode === "br") row.out = true;
+    }
+    const killer = this.roster.get(by);
+    if (killer) killer.kills += 1;
+    this.net.send("pdead", { killer: by, who: botId });
+    if (by === this.net.id) this.hooks.feed(`ERASED ${bot.name}`, 100);
+    else if (killer && row) this.hooks.feed(`${killer.name} erased ${row.name}`, 0);
+    const rp = this.remotes.get(botId);
+    if (rp) rp.alive = false;
+    this.sendScores();
+    this.checkWin();
+    this.hooks.changed();
+  }
+
+  private canHurtBetween(a: number, b: number) {
+    if (this.mode !== "tdm") return true;
+    return a < 0 || b < 0 || a !== b;
+  }
+
+  /** Top the match up to fillTo with bots, balancing teams as it goes. */
+  fillWithBots() {
+    if (!this.net.isHost) return;
+    const want = Math.max(0, this.fillTo - this.roster.size);
+    const pool = [...BOT_NAMES].sort(() => Math.random() - 0.5);
+    for (let i = 0; i < want; i++) {
+      const id = `bot~${Math.random().toString(36).slice(2, 9)}`;
+      const team = this.mode === "tdm" ? this.smallestTeam() : 0;
+      const bot = new Bot(id, pool[i % pool.length], team, this.botSkill, {
+        world: this.hooks.world,
+        candidates: () => this.candidateCache,
+        shoot: (b, o, d, dmg, tid) => this.botShoot(b, o, d, dmg, tid),
+        spawnPoints: () => this.hooks.spawnPoints(),
+        teamPlay: () => this.mode === "tdm",
+      });
+      bot.respawns = this.mode !== "br";
+      const pts = this.hooks.spawnPoints();
+      if (pts.length) bot.spawn(pts[Math.floor(Math.random() * pts.length)].clone());
+      this.bots.set(id, bot);
+      this.roster.set(id, { id, name: bot.name, team, kills: 0, deaths: 0, bot: true });
+      this.addRemote(id, bot.name, team);
+    }
+    if (want > 0) this.broadcastLobby();
+  }
+
+  /** Drop one bot so an arriving human can take its place. */
+  private dropOneBot(): boolean {
+    const first = this.bots.keys().next();
+    if (first.done) return false;
+    const id = first.value;
+    this.bots.delete(id);
+    this.roster.delete(id);
+    this.removeRemote(id);
+    this.net.broadcast("leave", { id });
+    return true;
+  }
+
+  private clearBots() {
+    for (const id of [...this.bots.keys()]) {
+      this.roster.delete(id);
+      this.removeRemote(id);
+    }
+    this.bots.clear();
   }
 
   /** How many are still in it (battle royale). */
@@ -359,6 +541,8 @@ export class MatchNet {
     const net = this.net;
 
     net.onPeerJoin = (id, meta) => {
+      // a person takes a bot's seat rather than growing the match
+      if (this.bots.size) this.dropOneBot();
       const name = String((meta as { name?: string })?.name || "doodle").slice(0, 14);
       const team = this.mode === "tdm" ? this.smallestTeam() : 0;
       this.roster.set(id, { id, name, team, kills: 0, deaths: 0 });
@@ -449,6 +633,19 @@ export class MatchNet {
       if (r) r.push(d, performance.now() / 1000);
     });
 
+    // every bot in one message rather than one message each
+    net.on<{ i: string; s: Snapshot }[]>("bots", (list) => {
+      if (net.isHost || !Array.isArray(list)) return;
+      const now = performance.now() / 1000;
+      for (const e of list) this.remotes.get(e.i)?.push(e.s, now);
+    });
+
+    // a client hit one of the host's bots
+    net.on<{ bot: string; amount: number; by: string }>("botdmg", (d, from) => {
+      if (!net.isHost || !d) return;
+      this.damageBot(d.bot, Math.max(0, d.amount || 0), d.by || from);
+    });
+
     // someone says they hit us; our client is the one that applies it
     net.on<{ amount: number; from: number[] | null; by: string; crit?: boolean }>("pdmg", (d, from) => {
       if (this.state !== "playing" || !this.hooks.localAlive()) return;
@@ -459,8 +656,10 @@ export class MatchNet {
       this.hooks.hurt(Math.max(0, d.amount || 0), pos);
     });
 
-    net.on<{ killer: string; how?: string }>("pdead", (d, from) => {
-      const victim = this.roster.get(from);
+    net.on<{ killer: string; who?: string; how?: string }>("pdead", (d, from) => {
+      // the host reports bot deaths on their behalf, so trust `who` when present
+      const whoId = d.who || from;
+      const victim = this.roster.get(whoId);
       const killer = d.killer ? this.roster.get(d.killer) : null;
       if (victim) victim.deaths += 1;
       if (killer) killer.kills += 1;
@@ -474,7 +673,7 @@ export class MatchNet {
           this.hooks.feed(`${vn} was erased`, 0);
         }
       }
-      const r = this.remotes.get(from);
+      const r = this.remotes.get(whoId);
       if (r) r.alive = false;
       if (this.mode === "br" && victim) victim.out = true;
       if (net.isHost) {
@@ -586,6 +785,12 @@ export class MatchNet {
   /** Report a hit we landed on another player. */
   reportHit(id: string, amount: number, fromPos: THREE.Vector3, crit: boolean) {
     if (!this.inMatch) return;
+    // bots live on the host, so their damage goes there rather than to a peer
+    if (this.roster.get(id)?.bot) {
+      if (this.net.isHost) this.damageBot(id, amount, this.net.id!);
+      else this.net.send("botdmg", { bot: id, amount: Math.round(amount), by: this.net.id });
+      return;
+    }
     this.net.sendTo(id, "pdmg", {
       amount: Math.round(amount),
       from: [+fromPos.x.toFixed(1), +fromPos.y.toFixed(1), +fromPos.z.toFixed(1)],
@@ -664,11 +869,29 @@ export class MatchNet {
       }
     }
 
+    // the host runs the bots every frame, but only ships them at snapshot rate
+    if (this.net.isHost && this.bots.size) {
+      this.candidateCache = this.botCandidates();
+      for (const b of this.bots.values()) b.update(dt);
+    }
+
     this.sendT -= dt;
     if (this.sendT <= 0) {
       this.sendT = 1 / SNAPSHOT_HZ;
       this.net.broadcast("ps", this.hooks.snapshot());
       this.firing = false;
+
+      if (this.net.isHost && this.bots.size) {
+        const now = performance.now() / 1000;
+        const batch: { i: string; s: Snapshot }[] = [];
+        for (const [id, b] of this.bots) {
+          const s = encodeLocal(b, b.firing);
+          batch.push({ i: id, s });
+          // the host draws its own bots through the same interpolation path
+          this.remotes.get(id)?.push(s, now);
+        }
+        this.net.send("bots", batch);
+      }
     }
   }
 
