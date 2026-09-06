@@ -16,7 +16,8 @@ export type WeaponKind =
   | "sniper"
   | "revolver"
   | "pistol"
-  | "knife";
+  | "knife"
+  | "katana";
 
 export interface WeaponDef {
   kind: WeaponKind;
@@ -154,6 +155,31 @@ const RAW_DEFS: Record<WeaponKind, BaseDef> = {
     falloff: null,
     camKick: [0.02, 0.01],
     fovKick: 2,
+    cycleDur: 0,
+    isGun: false,
+  },
+  katana: {
+    kind: "katana",
+    name: "KATANA",
+    hint: "combo slash · hold aim to guard and return fire",
+    magSize: 0,
+    reserve: 0,
+    maxReserve: 0,
+    interval: 0.34,
+    damage: 75,
+    headMul: 1.5,
+    pellets: 1,
+    spread: 0,
+    adsSpread: 0,
+    spreadKick: 0,
+    spreadMax: 0,
+    adsFov: 80,
+    auto: false,
+    reloadDur: 0,
+    reloadType: "mag",
+    falloff: null,
+    camKick: [0.024, 0.012],
+    fovKick: 2.4,
     cycleDur: 0,
     isGun: false,
   },
@@ -300,6 +326,7 @@ const HANDLING: Partial<Record<WeaponKind, { adsSpeed?: number; moveMul?: number
   revolver: { adsSpeed: 13.5, moveMul: 1.04 },
   pistol: { adsSpeed: 15.5, moveMul: 1.07 },
   knife: { adsSpeed: 16, moveMul: 1.1 },
+  katana: { adsSpeed: 15, moveMul: 1.12 },
 };
 
 const DEFS = Object.fromEntries(
@@ -311,7 +338,7 @@ const DEFS = Object.fromEntries(
 
 /** Every weapon, for loadout UIs. Guns first, melee last. */
 export const WEAPONS: { kind: WeaponKind; name: string; hint: string; isGun: boolean }[] = (
-  ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "knife"] as WeaponKind[]
+  ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "knife", "katana"] as WeaponKind[]
 ).map((k) => ({ kind: k, name: DEFS[k].name, hint: DEFS[k].hint, isGun: DEFS[k].isGun }));
 
 export const GUN_KINDS = WEAPONS.filter((w) => w.isGun).map((w) => w.kind);
@@ -324,7 +351,7 @@ export function weaponDef(kind: WeaponKind): WeaponDef {
 }
 
 /** Names that used to exist, so an old saved loadout still works. */
-const LEGACY_KINDS: Record<string, WeaponKind> = { katana: "knife" };
+const LEGACY_KINDS: Record<string, WeaponKind> = {};
 
 /** Drop anything unknown and guarantee a usable set of slots. */
 export function sanitizeLoadout(raw: unknown): WeaponKind[] {
@@ -342,6 +369,12 @@ export function sanitizeLoadout(raw: unknown): WeaponKind[] {
 export const EQUIP_DUR = 0.34;
 /** How far back the blade sits when folded into the handle. */
 const BLADE_RETRACT = 0.47;
+/** How long a katana swing takes from draw to follow-through. */
+const SLASH_DUR = 0.27;
+/** The flick after turning a shot away with the guard. */
+const PARRY_FLICK = 0.22;
+/** How long after raising the guard a block still counts as a clean parry. */
+const PARRY_WINDOW = 0.55;
 
 function bx(w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, parent: THREE.Object3D) {
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
@@ -372,6 +405,7 @@ const ANCHORS: Partial<Record<WeaponKind, { muzzle: V3; sight: V3; mag: V3; stoc
   pistol: { muzzle: [0, 0.05, -0.42], sight: [0, 0.14, -0.1], mag: [0, -0.24, 0.02], stock: [0, 0.06, 0.1] },
   // the knife takes no rails, but it still hangs a charm and wears a sticker
   knife: { muzzle: [0, 0.02, -0.5], sight: [0, 0.1, -0.1], mag: [0, -0.1, 0.1], stock: [0, -0.02, 0.2] },
+  katana: { muzzle: [0, 0.0, -1.05], sight: [0, 0.08, -0.2], mag: [0, -0.08, 0.1], stock: [0, 0.0, 0.24] },
 };
 
 /** Flat sticker shapes, drawn once and stuck on the side of the receiver. */
@@ -430,6 +464,15 @@ export class Weapon {
   blocking = false;
   blockT = 0;
   slashT = 0;
+  /** which way the next katana swing travels: alternates through a combo */
+  comboStep = 0;
+  private comboT = 0;
+  /** a parry flick, counted down after a shot is turned away */
+  parryT = 0;
+  parryDir = 1;
+  /** how bloody the blade is, 0..1, which is how many smears show */
+  private bloodLevel = 0;
+  private smears: THREE.Mesh[] = [];
   burstLeft = 0;
   burstT = 0;
   /** counts down while the gun is being swung up into view */
@@ -536,6 +579,22 @@ export class Weapon {
       bx(0.05, 0.05, 0.1, 0, 0.02, -0.34, m, this.root);
       this.placeFlash(0, 0.05, -0.42, 0.7);
       this.hand(0.12, -0.08, 0.02);
+    } else if (k === "katana") {
+      // A long single edge, a squared tsuba and a wrapped grip. It carries the
+      // blood it earns on the flat of the blade, laid on one streak per kill.
+      const sword = new THREE.Group();
+      const steel = makeInkMaterial({ ink: this.camo.ink, fill: true });
+      bx(0.014, 0.038, 1.0, 0, 0, -0.55, steel, sword); // blade
+      bx(0.014, 0.022, 0.09, 0, 0.008, -1.07, steel, sword); // kissaki
+      bx(0.02, 0.05, 0.9, 0, 0.026, -0.52, m, sword); // the shinogi ridge, in outline
+      bx(0.1, 0.1, 0.022, 0, 0, -0.05, b, sword); // tsuba
+      bx(0.034, 0.04, 0.32, 0, 0, 0.13, b, sword); // grip core
+      for (let i = 0; i < 6; i++) bx(0.04, 0.045, 0.022, 0, 0, 0.02 + i * 0.048, m, sword); // wrap
+      this.root.add(sword);
+      this.blade = sword;
+      this.buildSmears(sword);
+      this.hand(0.0, -0.01, 0.06);
+      this.hand(0.0, -0.01, 0.21);
     } else {
       // Switchblade: a fixed casing plus a blade that lives inside it and snaps
       // forward when the knife is drawn.
@@ -560,6 +619,46 @@ export class Weapon {
     this.fitAttachments();
     this.dress();
     this.root.visible = false;
+  }
+
+  /**
+   * Blood that clings to the flat of the blade. Each streak is a ragged sliver
+   * built in the plane of the steel and inset inside its silhouette, so nothing
+   * ever hangs off an edge no matter how many are showing.
+   */
+  private buildSmears(sword: THREE.Group) {
+    const blood = makeInkMaterial({ ink: INK.RED, fill: true, side: THREE.DoubleSide });
+    const BH = 0.017; // half the blade's height
+    const BX = 0.0075; // sit just proud of the face
+    const spec: [number, number, number][] = [
+      [-0.34, 0.3, 1],
+      [-0.7, 0.26, -1],
+      [-0.95, 0.17, 1],
+      [-0.52, 0.22, -1],
+      [-0.2, 0.2, 1],
+      [-0.84, 0.2, -1],
+    ];
+    for (let i = 0; i < spec.length; i++) {
+      const [zc, len, side] = spec[i];
+      const sh = new THREE.Shape();
+      const n = 10;
+      sh.moveTo(-len / 2, -BH * 0.92);
+      for (let k = 0; k <= n; k++) {
+        const t = k / n;
+        const taper = Math.sin(Math.PI * Math.min(1, t * 1.15));
+        const ragged = 0.55 + 0.45 * Math.abs(Math.sin(t * 7 + i * 2.1));
+        sh.lineTo(-len / 2 + len * t, -BH * 0.92 + BH * 1.84 * (0.3 + 0.7 * taper * ragged));
+      }
+      sh.lineTo(len / 2, -BH * 0.92);
+      sh.closePath();
+      const geo = new THREE.ShapeGeometry(sh, 2);
+      geo.rotateY(Math.PI / 2); // lay it into the plane of the blade
+      const mesh = new THREE.Mesh(geo, blood);
+      mesh.position.set(side * BX, 0, zc);
+      mesh.visible = false;
+      sword.add(mesh);
+      this.smears.push(mesh);
+    }
   }
 
   /** Camo bands, a hanging charm and a stuck-on sticker. */
@@ -722,6 +821,80 @@ export class Weapon {
     this.root.add(arm);
   }
 
+  /**
+   * The sword's own pose. It blends to an absolute guard rather than adding an
+   * offset, because the shared animator already scales the base rotation by how
+   * far into the aim you are — the same offset would land differently depending
+   * on how far the guard had come up.
+   */
+  private animateKatana(dt: number) {
+    const g = this.blade;
+    if (!g) return;
+    const guard = damp(g.userData.guard ?? 0, this.blocking ? 1 : 0, 16, dt);
+    g.userData.guard = guard;
+    const s = this.comboStep % 2 === 0 ? 1 : -1;
+    let rx = 0;
+    let ry = 0;
+    let rz = 0;
+    if (guard > 0.001) {
+      // the sword comes in close and upright, between you and whatever is coming
+      rx += 1.15 * guard;
+      ry += 0.28 * guard;
+      rz += 1.2 * guard;
+    }
+    if (this.slashT > 0) {
+      const t = clamp(1 - this.slashT / SLASH_DUR, 0, 1);
+      const e = t * t * (3 - 2 * t);
+      rz += s * (1.3 - 2.7 * e);
+      rx += 0.7 - 1.5 * e;
+      ry += s * (-0.35 + 0.8 * e);
+      g.position.x = s * (0.2 - 0.45 * e);
+      g.position.y = 0.14 - 0.24 * e;
+      g.position.z = -0.12 * Math.sin(t * Math.PI);
+    } else {
+      g.position.set(0, 0, 0);
+    }
+    if (this.parryT > 0) {
+      // a flick of the wrist, not something that throws the whole pose around
+      const e = Math.sin(clamp(this.parryT / PARRY_FLICK, 0, 1) * Math.PI);
+      rz += this.parryDir * e * 0.42;
+      ry += this.parryDir * e * 0.16;
+      g.position.x += this.parryDir * e * 0.035;
+    }
+    g.rotation.set(rx, ry, rz);
+    this.showBlood(dt);
+  }
+
+  /** Mark the blade — one more streak shows, and they dry off slowly. */
+  bloody(amount = 0.34) {
+    this.bloodLevel = clamp(this.bloodLevel + amount, 0, 1);
+  }
+
+  private showBlood(dt: number) {
+    if (!this.smears.length) return;
+    // it dries off slowly, so a bloody blade is a record of the last minute
+    this.bloodLevel = Math.max(0, this.bloodLevel - 0.02 * dt);
+    const showing = Math.round(this.bloodLevel * this.smears.length);
+    for (let i = 0; i < this.smears.length; i++) this.smears[i].visible = i < showing;
+  }
+
+  /** Start a swing. Returns the direction it travels, for the arc effect. */
+  startSlash() {
+    this.slashT = SLASH_DUR;
+    if (this.def.kind === "katana") {
+      this.comboStep += 1;
+      this.comboT = 0.9;
+      return this.comboStep % 2 === 0 ? 1 : -1;
+    }
+    return 1;
+  }
+
+  /** A shot turned away by the guard. */
+  parried(dir: number) {
+    this.parryT = PARRY_FLICK;
+    this.parryDir = dir;
+  }
+
   equip() {
     this.root.visible = true;
     this.reloading = false;
@@ -775,7 +948,8 @@ export class Weapon {
         }
       }
     }
-    if (this.blade) {
+    if (this.def.kind === "katana") this.animateKatana(dt);
+    else if (this.blade) {
       const guard = this.blocking ? 1 : 0;
       this.blade.rotation.x = damp(this.blade.rotation.x, guard * -0.9 + (this.slashT > 0 ? 1.2 : 0), 16, dt);
       this.blade.rotation.z = damp(this.blade.rotation.z, this.slashT > 0 ? 0.8 : guard * -0.3, 18, dt);
@@ -785,6 +959,11 @@ export class Weapon {
       const p = clamp(1 - this.equipT / (EQUIP_DUR * 0.62), 0, 1);
       const out = 1 - (1 - p) ** 3;
       this.edge.position.z = BLADE_RETRACT * (1 - out);
+    }
+    if (this.def.kind === "katana") {
+      this.comboT = Math.max(0, this.comboT - dt);
+      if (this.comboT <= 0) this.comboStep = 0;
+      this.parryT = Math.max(0, this.parryT - dt);
     }
     if (this.charmPivot) {
       // a slow idle sway, with a jolt every time the gun goes off
@@ -806,6 +985,8 @@ export interface PlayerHooks {
   scene: THREE.Scene;
   onFire: (w: Weapon, origin: THREE.Vector3, dir: THREE.Vector3, ads: boolean) => void;
   onSlash: (origin: THREE.Vector3, dir: THREE.Vector3, dmg: number, heavy: boolean) => void;
+  /** a shot turned away by a clean parry, sent back where it came from */
+  onDeflect: (origin: THREE.Vector3, dir: THREE.Vector3, dmg: number) => void;
   onNade: (origin: THREE.Vector3, dir: THREE.Vector3, charge: number) => void;
   onHurt: (amount: number, from: THREE.Vector3 | null) => void;
   onDeath: () => void;
@@ -897,6 +1078,8 @@ export class Player {
   rig = new THREE.Group();
   lookDelta = new THREE.Vector2();
   meleeStreak = 0;
+  /** which way the last swing travelled, for the arc the engine draws */
+  slashDir = 1;
   /** true once this life has fired, thrown or swung — closes the loadout window */
   spentResource = false;
   /** aim-down-sights as a toggle rather than hold; a settings choice */
@@ -1041,9 +1224,21 @@ export class Player {
     if (!this.weapon.def.isGun && this.weapon.blocking && from) {
       const to = new THREE.Vector3().subVectors(from, this.eye).normalize();
       if (to.dot(this.forward) > 0.45) {
-        amount *= 0.35;
+        // A guard raised in the last moment is a clean parry: it turns the shot
+        // away entirely and sends it back the way it came. Hold the guard up
+        // indefinitely and it is only a block, which still costs you.
+        const clean = this.weapon.def.kind === "katana" && this.weapon.blockT < PARRY_WINDOW;
+        if (clean) {
+          this.weapon.parried(to.dot(this.right) > 0 ? 1 : -1);
+          this.hooks.onDeflect(this.eye.clone(), to, amount);
+          amount = 0;
+        } else amount *= 0.35;
         this.hooks.audio.parry();
         this.flashFx = 0.4;
+        if (amount <= 0) {
+          this.hooks.input.rumble(0.5, 0.4, 90);
+          return;
+        }
       }
     }
     this.hp -= amount;
@@ -1359,14 +1554,25 @@ export class Player {
     const fireHeld = i.down("fire");
     const firePress = i.pressed("fire");
     if (!this.weapon.def.isGun) {
-      if (firePress && canFire && !this.weapon.blocking) {
-        this.weapon.fireT = this.weapon.def.interval;
+      const w = this.weapon;
+      const katana = w.def.kind === "katana";
+      // The katana chains: while a combo is live, holding the trigger keeps
+      // swinging. The switchblade is one deliberate stab per press.
+      const wantSlash = katana ? firePress || (fireHeld && w.comboStep > 0) : firePress;
+      if (wantSlash && canFire && !w.blocking) {
+        w.fireT = w.def.interval;
         this.spentResource = true;
-        this.weapon.slashT = 0.22;
+        const dir = w.startSlash();
         this.hooks.audio.blade();
-        this.recoilP.kick(this.weapon.def.camKick[0] * 20);
+        this.recoilP.kick(w.def.camKick[0] * 20);
         const heavy = this.meleeStreak >= 3;
-        this.hooks.onSlash(this.eye.clone(), this.forward.clone(), this.weapon.def.damage * (heavy ? 1.8 : 1), heavy);
+        this.hooks.onSlash(this.eye.clone(), this.forward.clone(), w.def.damage * (heavy ? 1.8 : 1), heavy);
+        // a swing started at a sprint or in the air carries you into it
+        if (katana && (this.sprinting || !this.onGround)) {
+          this.vel.addScaledVector(this.forward, 5.5);
+          this.fovKick.kick(45);
+        }
+        this.slashDir = dir;
         if (heavy) {
           this.meleeStreak = 0;
           this.vel.addScaledVector(this.forward, 8);

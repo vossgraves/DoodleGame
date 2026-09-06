@@ -32,6 +32,7 @@ import * as account from "./game/account";
 type Screen = "menu" | "howto" | "settings" | "loadout" | "account" | "game";
 
 const GUNS = WEAPONS.filter((w) => w.isGun);
+const MELEE = WEAPONS.filter((w) => !w.isGun);
 const isGun = (k: WeaponKind) => GUNS.some((g) => g.kind === k);
 
 /** The six inks the art style is built from — indexes match INK in renderer.ts. */
@@ -1360,7 +1361,9 @@ function Gunsmith({
   const base = weaponDef(kind);
   const built = applyBuild(base, build);
   const fitted = SLOTS.filter((s) => build[s.id]).length;
-  const [tab, setTab] = useState<"rails" | "camo" | "charm" | "sticker">("rails");
+  // a blade has no rails to hang anything off, so it only gets the cosmetics
+  const rails = !!WEAPONS.find((w) => w.kind === kind)?.isGun;
+  const [tab, setTab] = useState<"rails" | "camo" | "charm" | "sticker">(rails ? "rails" : "camo");
   const goal = nextCamo(kills);
 
   const setPart = (part: keyof WeaponSkin, id: string | undefined) => {
@@ -1386,7 +1389,7 @@ function Gunsmith({
       <div className="gs-tabs">
         {(
           [
-            ["rails", `rails · ${fitted}/4`],
+            ...(rails ? ([["rails", `rails · ${fitted}/4`]] as const) : []),
             ["camo", "camo"],
             ["charm", "charm"],
             ["sticker", "sticker"],
@@ -1454,7 +1457,7 @@ function Gunsmith({
         </div>
       )}
 
-      {tab !== "rails" ? null : (
+      {tab !== "rails" || !rails ? null : (
         <>
 
       <div className="gs-stats">
@@ -1556,9 +1559,7 @@ function LoadoutScreen({
     <div className="absolute inset-0 z-10 overflow-y-auto p-4 paper-bg">
       <div className="ink-panel mx-auto w-full max-w-[860px] px-7 py-6">
         <h2 className="m-0 text-center font-[Caveat,cursive] text-5xl">loadout</h2>
-        <p className="mt-1 text-center text-lg opacity-70">
-          three guns on 1–3, {WEAPONS.find((w) => w.kind === melee)?.name.toLowerCase()} always on 4
-        </p>
+        <p className="mt-1 text-center text-lg opacity-70">three guns on 1–3, a blade on 4</p>
 
         {[0, 1, 2].map((slot) => (
           <div key={slot} className="mt-5">
@@ -1603,8 +1604,44 @@ function LoadoutScreen({
           </div>
         ))}
 
+        <div className="mt-5">
+          <div className="mb-2 flex items-center gap-3 border-b-2 border-[var(--ink)] text-2xl">
+            <span>slot 4</span>
+            <WeaponIcon kind={melee} className="wicon big" />
+            <span className="text-lg opacity-60">{WEAPONS.find((w) => w.kind === melee)?.name}</span>
+            <button className="ink-btn ml-auto text-base" onClick={() => setTuning(tuning === melee ? null : melee)}>
+              cosmetics
+            </button>
+          </div>
+          {tuning === melee && (
+            <Gunsmith
+              kind={melee}
+              build={{}}
+              skin={wardrobe[melee] ?? {}}
+              kills={weaponKills[melee] ?? 0}
+              onChange={() => {}}
+              onSkin={(sk) => onWardrobe({ ...wardrobe, [melee]: sk })}
+              onClose={() => setTuning(null)}
+            />
+          )}
+          <div className="flex flex-wrap gap-2">
+            {MELEE.map((w) => (
+              <button
+                key={w.kind}
+                className={`gun-chip withicon ${melee === w.kind ? "on" : ""}`}
+                onClick={() => onChange([...carried, w.kind])}
+                aria-label={w.name}
+                title={`${w.name} — ${w.hint}`}
+              >
+                <WeaponIcon kind={w.kind} />
+                <span className="wname">{w.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="mt-6 text-lg leading-snug opacity-80">
-          {carried.map((k) => {
+          {[...carried, melee].map((k) => {
             const w = WEAPONS.find((x) => x.kind === k);
             return (
               <div key={k} className="flex items-center gap-3">

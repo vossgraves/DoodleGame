@@ -86,6 +86,15 @@ const SHAPES: Record<string, React.ReactNode> = {
       <path d="M26.5 12.4v-2" />
     </>
   ),
+  katana: (
+    <>
+      {/* long single edge, squared tsuba, wrapped grip */}
+      <path d="M17 12.4 45 9l-1.6 3.4L17 15.2z" />
+      <path d="M14.5 10.6h2.6v6h-2.6z" />
+      <path d="M4 12.2h10.5v2.6H4z" />
+      <path d="M6 12.2v2.6M8.5 12.2v2.6M11 12.2v2.6" />
+    </>
+  ),
 };
 
 export function WeaponIcon({ kind, className }: { kind: string; className?: string }) {

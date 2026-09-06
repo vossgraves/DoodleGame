@@ -252,6 +252,7 @@ export class Game {
       scene: this.R.scene,
       onFire: (w, o, d, ads) => this.handleFire(w, o, d, ads),
       onSlash: (o, d, dmg, heavy) => this.handleSlash(o, d, dmg, heavy),
+      onDeflect: (o, d, dmg) => this.handleDeflect(o, d, dmg),
       onNade: (o, d, c) => this.combat.throwNade(o, d, c),
       onHurt: (_a, from) => this.handleHurt(from),
       onDeath: () => this.handleDeath(),
@@ -449,11 +450,33 @@ export class Game {
       this.markHit(r.kill, r.crit);
       this.player.meleeStreak += r.kill ? 1 : 0;
       this.hitstopT = heavy ? 0.08 : 0.04;
+      this.player.weapon.bloody(r.kill ? 0.34 : 0.12);
     }
     if (r.kill) {
       // score already? slash doesn't call onKill per enemy. Let's award roughly
       this.addScore(heavy ? 200 : 120, heavy ? "FOCUS SLASH" : "SLASH");
       this.kills += 1;
+    }
+  }
+
+  /**
+   * A shot the katana turned away. It goes back down its own path as a real
+   * hitscan, so whoever fired it takes it — and the blade wears the result.
+   */
+  private handleDeflect(origin: THREE.Vector3, dir: THREE.Vector3, dmg: number) {
+    this.combat.tracer(origin, origin.clone().addScaledVector(dir, 40));
+    this.audio.parry();
+    this.addScore(20, "DEFLECTED");
+    for (const t of this.streakTargets()) {
+      const to = new THREE.Vector3().subVectors(t.center, origin);
+      const d = to.length();
+      if (d > 42) continue;
+      to.divideScalar(d);
+      if (to.dot(dir) < 0.985) continue;
+      if (!this.world.hasLineOfSight(origin, t.center)) continue;
+      t.hit(dmg * 1.5, false);
+      this.player.weapon.bloody(0.2);
+      break;
     }
   }
 
