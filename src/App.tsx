@@ -1072,6 +1072,7 @@ function LoadoutScreen({
             <div className="mb-2 flex items-center gap-3 border-b-2 border-[var(--ink)] text-2xl">
               <span>slot {slot + 1}</span>
               <WeaponIcon kind={carried[slot]} className="wicon big" />
+              <span className="text-lg opacity-60">{WEAPONS.find((w) => w.kind === carried[slot])?.name}</span>
             </div>
             <div className="flex flex-wrap gap-2">
               {GUNS.map((w) => (
@@ -1083,6 +1084,7 @@ function LoadoutScreen({
                   title={`${w.name} — ${w.hint}`}
                 >
                   <WeaponIcon kind={w.kind} />
+                  <span className="wname">{w.name}</span>
                 </button>
               ))}
             </div>
@@ -1095,6 +1097,7 @@ function LoadoutScreen({
             return (
               <div key={k} className="flex items-center gap-3">
                 <WeaponIcon kind={k} />
+                <b className="text-base">{w?.name}</b>
                 <span>{w?.hint}</span>
               </div>
             );
@@ -1194,7 +1197,10 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
                  so the row cannot outgrow the space between the thumbs */
               <div key={s.name} className={`m-wep ${s.active ? "on" : ""} ${s.empty ? "empty" : ""}`}>
                 <span className="n">{i + 1}</span>
-                <WeaponIcon kind={s.kind} className="wicon sm" />
+                <div className="stack">
+                  <WeaponIcon kind={s.kind} className="wicon sm" />
+                  {s.active && <span className="wname">{s.name}</span>}
+                </div>
                 <span className="am">{s.ammo}</span>
               </div>
             ))}
@@ -1249,6 +1255,7 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
                 <div key={s.name} className={`slot ${s.active ? "active" : ""} ${s.empty ? "empty" : ""}`} title={s.name}>
                   <span className="opacity-60">{i + 1}</span>
                   <WeaponIcon kind={s.kind} />
+                  <span className="wname">{s.name}</span>
                   <span className="text-base opacity-70">{s.ammo}</span>
                 </div>
               ))}

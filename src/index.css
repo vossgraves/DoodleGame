@@ -692,16 +692,35 @@ canvas.game-canvas {
   width: 58px;
   height: 29px;
 }
-/* icon-only: the silhouette is the label, so give it room to read */
+/* the silhouette leads, the name is a small caption under it */
 .gun-chip.withicon {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 5px 10px;
+  gap: 1px;
+  padding: 5px 9px 3px;
 }
 .gun-chip.withicon .wicon {
   width: 46px;
   height: 23px;
+}
+.wname {
+  font-size: 11px;
+  line-height: 1.1;
+  letter-spacing: 0.05em;
+  opacity: 0.65;
+}
+.gun-chip.withicon.on .wname {
+  opacity: 1;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  line-height: 1;
+}
+.stack .wname {
+  font-size: 9px;
 }
 
 .slot {
