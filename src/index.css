@@ -472,6 +472,7 @@ canvas.game-canvas {
 }
 .touch-layer > * {
   pointer-events: auto;
+  touch-action: none;
 }
 
 .joy-base {
@@ -523,6 +524,17 @@ canvas.game-canvas {
 .tbtn.held {
   background: rgba(26, 48, 192, 0.18);
   transform: scale(0.96);
+}
+/* icons never swallow the pointer, so the button always owns the drag */
+.tico {
+  display: block;
+  width: 48%;
+  height: 48%;
+  pointer-events: none;
+}
+.tbtn.fire .tico {
+  width: 54%;
+  height: 54%;
 }
 .tbtn.fire {
   width: 92px;

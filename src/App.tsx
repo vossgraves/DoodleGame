@@ -312,7 +312,10 @@ function HowTo({ onBack, touch }: { onBack: () => void; touch: boolean }) {
           <div>
             <div className="mb-1 border-b-2 border-[var(--ink)] text-2xl">shoot</div>
             {touch ? (
-              <p>hold FIRE. AIM tightens the shot. RELOAD when the tally runs dry. the wee 1-4 button cycles guns.</p>
+              <p>
+                hold the red target to fire — and slide that same thumb to keep aiming, no second finger needed. the
+                scope tightens the shot, the arrow reloads, the pistol cycles guns.
+              </p>
             ) : (
               <p>
                 <b>click</b> fire · <b>right mouse</b> aim · <b>R</b> reload · <b>1–4</b> weapons · <b>G</b> grenade · <b>X</b> dash
@@ -551,6 +554,91 @@ function DeadOverlay({ hud, onRetry, onMenu }: { hud: HudSnap; onRetry: () => vo
   );
 }
 
+const LOOK_GAIN = 1.8;
+
+const ICONS: Record<string, React.ReactNode> = {
+  fire: (
+    <>
+      <circle cx="12" cy="12" r="6.6" />
+      <line x1="12" y1="1.8" x2="12" y2="4.4" />
+      <line x1="12" y1="19.6" x2="12" y2="22.2" />
+      <line x1="1.8" y1="12" x2="4.4" y2="12" />
+      <line x1="19.6" y1="12" x2="22.2" y2="12" />
+      <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+    </>
+  ),
+  aim: (
+    <>
+      <circle cx="12" cy="12" r="6.4" />
+      <line x1="12" y1="2" x2="12" y2="22" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+    </>
+  ),
+  jump: (
+    <>
+      <line x1="12" y1="17.5" x2="12" y2="4.5" />
+      <polyline points="6.6 9.9 12 4.5 17.4 9.9" />
+      <line x1="5" y1="21" x2="19" y2="21" />
+    </>
+  ),
+  crouch: (
+    <>
+      <line x1="12" y1="4" x2="12" y2="16.5" />
+      <polyline points="6.6 11.1 12 16.5 17.4 11.1" />
+      <line x1="5" y1="21" x2="19" y2="21" />
+    </>
+  ),
+  sprint: (
+    <>
+      <polyline points="5 6 10.5 12 5 18" />
+      <polyline points="12.5 6 18 12 12.5 18" />
+    </>
+  ),
+  reload: (
+    <>
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </>
+  ),
+  nade: (
+    <>
+      <circle cx="11.5" cy="14.5" r="6" />
+      <path d="M9.3 8.5V6.8h4.4v1.7" />
+      <path d="M13.7 7.4c2.8-.4 4.3.8 4.5 3.1" />
+      <circle cx="18.6" cy="5.5" r="1.6" />
+    </>
+  ),
+  wep: (
+    <>
+      <path d="M2.5 8.5h15.5v3.2h-3.4l-2.1 4.4H9.2l1.5-4.4H2.5z" />
+      <line x1="6" y1="11.7" x2="6" y2="14" />
+    </>
+  ),
+  pause: (
+    <>
+      <line x1="9" y1="5" x2="9" y2="19" />
+      <line x1="15" y1="5" x2="15" y2="19" />
+    </>
+  ),
+};
+
+function Icon({ name }: { name: string }) {
+  return (
+    <svg
+      className="tico"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.3}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {ICONS[name]}
+    </svg>
+  );
+}
+
 function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
   const joyRef = useRef<HTMLDivElement>(null);
   const knobRef = useRef<HTMLDivElement>(null);
@@ -558,20 +646,43 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
   const lookId = useRef<number | null>(null);
   const lastLook = useRef({ x: 0, y: 0 });
   const joyId = useRef<number | null>(null);
+  // Pointers that began on an action button. They keep the button held AND steer
+  // the camera, so one thumb can hold FIRE and aim without a second finger.
+  const dragLook = useRef(new Map<number, { x: number; y: number }>());
 
   const setBtn = (name: string, down: boolean) => {
     gameRef.current?.input.setTouch(name, down);
     setHeld((h) => ({ ...h, [name]: down }));
   };
 
+  const trackDrag = (e: React.PointerEvent) => {
+    dragLook.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  };
+  const dragToLook = (e: React.PointerEvent) => {
+    const last = dragLook.current.get(e.pointerId);
+    if (!last) return;
+    const dx = e.clientX - last.x;
+    const dy = e.clientY - last.y;
+    last.x = e.clientX;
+    last.y = e.clientY;
+    if (dx || dy) gameRef.current?.input.addTouchLook(dx * LOOK_GAIN, dy * LOOK_GAIN);
+  };
+  const endDrag = (e: React.PointerEvent) => {
+    dragLook.current.delete(e.pointerId);
+  };
+
   useEffect(() => {
-    return () => gameRef.current?.input.clearTouch();
+    const drags = dragLook.current;
+    return () => {
+      drags.clear();
+      gameRef.current?.input.clearTouch();
+    };
   }, [gameRef]);
 
   const onJoyDown = (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);
     joyId.current = e.pointerId;
     moveJoy(e);
   };
@@ -605,14 +716,14 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
     e.preventDefault();
     lookId.current = e.pointerId;
     lastLook.current = { x: e.clientX, y: e.clientY };
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+    e.currentTarget.setPointerCapture(e.pointerId);
   };
   const onLookMove = (e: React.PointerEvent) => {
     if (lookId.current !== e.pointerId) return;
     const dx = e.clientX - lastLook.current.x;
     const dy = e.clientY - lastLook.current.y;
     lastLook.current = { x: e.clientX, y: e.clientY };
-    gameRef.current?.input.addTouchLook(dx * 1.8, dy * 1.8);
+    gameRef.current?.input.addTouchLook(dx * LOOK_GAIN, dy * LOOK_GAIN);
   };
   const onLookUp = (e: React.PointerEvent) => {
     if (lookId.current === e.pointerId) lookId.current = null;
@@ -622,14 +733,37 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      // capture on the button, not the <svg> icon inside it
+      e.currentTarget.setPointerCapture(e.pointerId);
+      trackDrag(e);
       setBtn(name, true);
     },
+    onPointerMove: dragToLook,
     onPointerUp: (e: React.PointerEvent) => {
       e.stopPropagation();
+      endDrag(e);
       setBtn(name, false);
     },
-    onPointerCancel: () => setBtn(name, false),
+    onPointerCancel: (e: React.PointerEvent) => {
+      endDrag(e);
+      setBtn(name, false);
+    },
+  });
+
+  const tap = (fn: () => void) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      trackDrag(e);
+      fn();
+    },
+    onPointerMove: dragToLook,
+    onPointerUp: (e: React.PointerEvent) => {
+      e.stopPropagation();
+      endDrag(e);
+    },
+    onPointerCancel: endDrag,
   });
 
   return (
@@ -651,46 +785,40 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
       >
         <div ref={knobRef} className="joy-knob" />
       </div>
-      <button className={`tbtn fire ${held.fire ? "held" : ""}`} {...hold("fire")}>
-        FIRE
+      <button className={`tbtn fire ${held.fire ? "held" : ""}`} aria-label="fire" {...hold("fire")}>
+        <Icon name="fire" />
       </button>
-      <button className={`tbtn jump ${held.jump ? "held" : ""}`} {...hold("jump")}>
-        JUMP
+      <button className={`tbtn jump ${held.jump ? "held" : ""}`} aria-label="jump" {...hold("jump")}>
+        <Icon name="jump" />
       </button>
-      <button className={`tbtn aim ${held.aim ? "held" : ""}`} {...hold("aim")}>
-        AIM
+      <button className={`tbtn aim ${held.aim ? "held" : ""}`} aria-label="aim" {...hold("aim")}>
+        <Icon name="aim" />
       </button>
-      <button className={`tbtn reload ${held.reload ? "held" : ""}`} {...hold("reload")}>
-        R
+      <button className={`tbtn reload ${held.reload ? "held" : ""}`} aria-label="reload" {...hold("reload")}>
+        <Icon name="reload" />
       </button>
-      <button className={`tbtn sprint ${held.sprint ? "held" : ""}`} {...hold("sprint")}>
-        RUN
+      <button className={`tbtn sprint ${held.sprint ? "held" : ""}`} aria-label="sprint" {...hold("sprint")}>
+        <Icon name="sprint" />
       </button>
-      <button className={`tbtn crouch ${held.crouch ? "held" : ""}`} {...hold("crouch")}>
-        DUCK
+      <button className={`tbtn crouch ${held.crouch ? "held" : ""}`} aria-label="crouch" {...hold("crouch")}>
+        <Icon name="crouch" />
       </button>
-      <button className={`tbtn nade ${held.grenade ? "held" : ""}`} {...hold("grenade")}>
-        NADE
+      <button className={`tbtn nade ${held.grenade ? "held" : ""}`} aria-label="grenade" {...hold("grenade")}>
+        <Icon name="nade" />
       </button>
-      <button
-        className="tbtn wep"
-        onPointerDown={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          gameRef.current?.player.nextWeapon(1);
-        }}
-      >
-        GUN
+      <button className="tbtn wep" aria-label="switch weapon" {...tap(() => gameRef.current?.player.nextWeapon(1))}>
+        <Icon name="wep" />
       </button>
       <button
         className="tbtn pause"
+        aria-label="pause"
         onPointerDown={(e) => {
           e.preventDefault();
           e.stopPropagation();
           gameRef.current?.pause();
         }}
       >
-        II
+        <Icon name="pause" />
       </button>
     </div>
   );
