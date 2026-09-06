@@ -5,7 +5,10 @@ import { Input } from "./input";
 import { AudioSys } from "./audio";
 import { buildLevel, disposeLevel, getMap, DEFAULT_MAP, type Level, type Mode } from "./level";
 import { ZoneView } from "./zone";
-import { Player, type Weapon, type WeaponKind } from "./player";
+
+/** how long a fallen player's kit stays on the ground */
+const DROP_LIFE = 30;
+import { Player, WEAPONS, type Weapon, type WeaponKind } from "./player";
 import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
@@ -203,6 +206,21 @@ export class Game {
         headPos: this.player.eye,
         alive: this.player.alive,
       }),
+      dropAt: (p, weapon, ids) => {
+        const at = new THREE.Vector3(p[0], p[1], p[2]);
+        this.combat.spawnPickup("ammo", at, { id: ids[0], life: DROP_LIFE });
+        // only drop a gun we actually know about
+        const kind = WEAPONS.find((w) => w.kind === weapon && w.isGun)?.kind;
+        if (kind) {
+          this.combat.spawnPickup("gun", at.clone().add(new THREE.Vector3(1.0, 0, 0.4)), {
+            id: ids[1],
+            weapon: kind,
+            life: DROP_LIFE,
+          });
+        }
+      },
+      removeDrop: (id) => this.combat.removePickup(id),
+      localWeapon: () => (this.player.weapon.def.isGun ? this.player.weapon.def.kind : null),
       spawnLoot: (items) => {
         for (const it of items) {
           this.combat.spawnPickup(it.kind, new THREE.Vector3(it.pos[0], it.pos[1], it.pos[2]));
@@ -214,6 +232,17 @@ export class Game {
     });
     // a hit on another player is reported to them; their client applies it
     this.combat.onRemoteHit = (t, dmg, crit) => this.match.reportHit(t.id, dmg, this.player.eye, crit);
+    // a finisher: no health bar survives it, and it reads as its own event
+    this.combat.onRemoteExecute = (t) => {
+      this.match.reportHit(t.id, 500, this.player.eye, true);
+      const name = this.match.roster.get(t.id)?.name ?? "them";
+      this.addScore(150, `EXECUTED ${name}`);
+      this.hitstopT = Math.max(this.hitstopT, 0.16);
+      this.player.shake += 0.5;
+      this.player.fovKick.kick(120);
+      this.audio.crit();
+    };
+    this.combat.onPickupTaken = (id) => this.match.reportPickup(id);
     this.zoneView = new ZoneView(this.R.scene);
     this.audio.setTune(mode === "zombies" ? "zombies" : "district");
     const sens = Number(localStorage.getItem("doodle_sens") || 100);
@@ -362,10 +391,10 @@ export class Game {
   }
 
   private handleDeath() {
-    // online you come back; the match, not the run, is what ends
+    // online you come back; the match, not the run, is what ends.
+    // reportDeath does the announcing, because it knows who killed you.
     if (this.match.inMatch) {
       this.match.reportDeath();
-      this.announce("ERASED", "back on the page shortly");
       return;
     }
     this.state = "dead";

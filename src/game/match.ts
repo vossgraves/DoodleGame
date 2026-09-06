@@ -83,6 +83,11 @@ export interface MatchHooks {
   world: World;
   /** the local player as something a bot can aim at */
   localBody: () => { pos: THREE.Vector3; center: THREE.Vector3; headPos: THREE.Vector3; alive: boolean };
+  /** scatter what a fallen player left behind; ids are shared so drops match everywhere */
+  dropAt: (pos: [number, number, number], weapon: string | null, ids: [number, number]) => void;
+  removeDrop: (id: number) => void;
+  /** the gun currently in the local player's hands, for their death drop */
+  localWeapon: () => string | null;
   feed: (text: string, pts: number) => void;
   announce: (main: string, sub?: string) => void;
   /** roster/score/state changed — refresh any UI */
@@ -391,7 +396,10 @@ export class MatchNet {
     }
     const killer = this.roster.get(by);
     if (killer) killer.kills += 1;
-    this.net.send("pdead", { killer: by, who: botId });
+    const drops = this.dropIds();
+    const at: [number, number, number] = [+bot.pos.x.toFixed(1), +bot.pos.y.toFixed(1), +bot.pos.z.toFixed(1)];
+    this.net.send("pdead", { killer: by, who: botId, at, gun: bot.dropWeapon, drops });
+    this.hooks.dropAt(at, bot.dropWeapon, drops);
     if (by === this.net.id) this.hooks.feed(`ERASED ${bot.name}`, 100);
     else if (killer && row) this.hooks.feed(`${killer.name} erased ${row.name}`, 0);
     const rp = this.remotes.get(botId);
@@ -422,6 +430,8 @@ export class MatchNet {
         teamPlay: () => this.mode === "tdm",
       });
       bot.respawns = this.mode !== "br";
+      // varied kit, so what they drop is worth walking over
+      bot.dropWeapon = ["rifle", "carbine", "smg", "shotgun", "lmg", "revolver"][Math.floor(Math.random() * 6)];
       const pts = this.hooks.spawnPoints();
       if (pts.length) bot.spawn(pts[Math.floor(Math.random() * pts.length)].clone());
       this.bots.set(id, bot);
@@ -646,6 +656,11 @@ export class MatchNet {
       this.damageBot(d.bot, Math.max(0, d.amount || 0), d.by || from);
     });
 
+    // someone got to a drop first
+    net.on<{ id: number }>("taken", (d) => {
+      if (d && typeof d.id === "number") this.hooks.removeDrop(d.id);
+    });
+
     // someone says they hit us; our client is the one that applies it
     net.on<{ amount: number; from: number[] | null; by: string; crit?: boolean }>("pdmg", (d, from) => {
       if (this.state !== "playing" || !this.hooks.localAlive()) return;
@@ -656,10 +671,19 @@ export class MatchNet {
       this.hooks.hurt(Math.max(0, d.amount || 0), pos);
     });
 
-    net.on<{ killer: string; who?: string; how?: string }>("pdead", (d, from) => {
+    net.on<{
+      killer: string;
+      who?: string;
+      how?: string;
+      at?: [number, number, number];
+      gun?: string | null;
+      drops?: [number, number];
+    }>("pdead", (d, from) => {
       // the host reports bot deaths on their behalf, so trust `who` when present
       const whoId = d.who || from;
       const victim = this.roster.get(whoId);
+      // everyone spawns the same drops from the same ids, so no round trip is needed
+      if (d.at && d.drops) this.hooks.dropAt(d.at, d.gun ?? null, d.drops);
       const killer = d.killer ? this.roster.get(d.killer) : null;
       if (victim) victim.deaths += 1;
       if (killer) killer.kills += 1;
@@ -800,10 +824,27 @@ export class MatchNet {
   }
 
   /** The local player died; tell everyone and start the respawn clock. */
+  /** Two ids from one random base, so both drops are unique across clients. */
+  private dropIds(): [number, number] {
+    const base = Math.floor(Math.random() * 1e9);
+    return [base, base + 1];
+  }
+
+  /** Someone walked over a drop; make it vanish for everyone else too. */
+  reportPickup(id: number) {
+    if (this.net.active) this.net.broadcast("taken", { id });
+  }
+
   reportDeath() {
     if (!this.inMatch) return;
     const killer = this.lastHitBy;
-    this.net.broadcast("pdead", { killer });
+    const p = this.hooks.localPos();
+    const drops = this.dropIds();
+    const gun = this.hooks.localWeapon();
+    const at: [number, number, number] = [+p.x.toFixed(1), +p.y.toFixed(1), +p.z.toFixed(1)];
+    this.net.broadcast("pdead", { killer, at, gun, drops });
+    // drop our own kit locally as well; the message does not come back to us
+    this.hooks.dropAt(at, gun, drops);
     const me = this.roster.get(this.net.id!);
     if (me) me.deaths += 1;
     const k = killer ? this.roster.get(killer) : null;
@@ -815,13 +856,16 @@ export class MatchNet {
     this.lastHitBy = null;
     this.deadT = 0;
     // battle royale has no second chances
+    // name whoever did it, the way a kill cam would
+    const byName = k?.name;
     if (this.mode === "br") {
       if (me) me.out = true;
       this.pendingRespawn = false;
-      this.hooks.announce("ERASED", "you are out");
+      this.hooks.announce("ERASED", byName ? `${byName} put you out` : "you are out");
       if (this.net.isHost) this.checkWin();
     } else {
       this.pendingRespawn = true;
+      this.hooks.announce("ERASED", byName ? `by ${byName}` : "back on the page shortly");
     }
     this.hooks.changed();
   }

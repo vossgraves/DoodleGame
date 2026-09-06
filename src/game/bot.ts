@@ -96,6 +96,8 @@ export class Bot implements LocalSnapshotSource {
   lastHitBy: string | null = null;
   /** battle royale switches this off: a dead bot stays out */
   respawns = true;
+  /** what it leaves on the ground when it goes down */
+  dropWeapon = "rifle";
 
   private targetId: string | null = null;
   private seenT = 0;

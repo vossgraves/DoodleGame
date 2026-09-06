@@ -3,7 +3,7 @@ import { World, raySphere } from "./physics";
 import { INK, makeInkMaterial } from "./renderer";
 import { rand, randInt, clamp, damp, wrapAngle, choose, TAU } from "./math";
 import type { Mode } from "./level";
-import type { Player } from "./player";
+import type { Player, WeaponKind } from "./player";
 import type { AudioSys } from "./audio";
 // type-only, so this does not create a runtime cycle with remote.ts
 import type { NetTarget } from "./remote";
@@ -193,11 +193,17 @@ export interface Projectile {
 }
 
 export interface Pickup {
-  kind: "ammo" | "hp" | "nade";
+  kind: "ammo" | "hp" | "nade" | "gun";
   pos: THREE.Vector3;
   mesh: THREE.Group;
   t: number;
   alive: boolean;
+  /** shared id so every client removes the same drop when someone takes it */
+  id: number;
+  /** seconds before it fades; Infinity for map loot that should stay put */
+  life: number;
+  /** for "gun" drops: which weapon the fallen player was carrying */
+  weapon?: WeaponKind;
 }
 
 export class Enemy {
@@ -276,6 +282,8 @@ export class Combat {
   /** other players, shot through the same path as bots */
   remotes: NetTarget[] = [];
   onRemoteHit: ((t: NetTarget, dmg: number, crit: boolean, point: THREE.Vector3) => void) | null = null;
+  /** a blade landed from behind at contact range */
+  onRemoteExecute: ((t: NetTarget) => void) | null = null;
   private projGeo = new THREE.SphereGeometry(0.07, 6, 5);
   private projMat = makeInkMaterial({ ink: INK.RED, fill: true });
   private spitMat = makeInkMaterial({ ink: INK.GREEN, fill: true });
@@ -359,20 +367,69 @@ export class Combat {
     this.tracers.push({ mesh: m, life: 0.07 });
   }
 
-  spawnPickup(kind: Pickup["kind"], pos: THREE.Vector3) {
+  private nextPickupId = 1;
+  /** someone took a drop; the caller tells the other clients so it vanishes there too */
+  onPickupTaken: ((id: number) => void) | null = null;
+
+  spawnPickup(
+    kind: Pickup["kind"],
+    pos: THREE.Vector3,
+    opts: { id?: number; weapon?: WeaponKind; life?: number } = {},
+  ) {
+    const id = opts.id ?? this.nextPickupId++;
+    // keep local ids ahead of anything the host has handed out
+    if (opts.id !== undefined && opts.id >= this.nextPickupId) this.nextPickupId = opts.id + 1;
+    if (this.pickups.some((p) => p.alive && p.id === id)) return;
+
     const g = new THREE.Group();
     const ink = kind === "hp" ? INK.RED : kind === "nade" ? INK.GREEN : INK.ORANGE;
-    const box = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), makeInkMaterial({ ink, fill: true }));
-    g.add(box);
-    if (kind === "hp") {
-      const plus = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), makeInkMaterial({ ink: INK.RED, fill: true }));
-      plus.position.y = 0.5;
-      g.add(plus);
+    if (kind === "gun") {
+      // a little dropped rifle rather than a crate, so it reads at a glance
+      const mat = makeInkMaterial({ ink: INK.BLACK, fill: true });
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.13, 0.1), mat);
+      g.add(body);
+      const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.055, 0.055), mat);
+      barrel.position.x = 0.44;
+      g.add(barrel);
+      const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 0.09), mat);
+      grip.position.set(-0.16, -0.16, 0);
+      grip.rotation.z = 0.3;
+      g.add(grip);
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.2, 0.07), makeInkMaterial({ ink: INK.ORANGE, fill: true }));
+      mag.position.set(0.06, -0.17, 0);
+      g.add(mag);
+      g.rotation.z = 0.25;
+    } else {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), makeInkMaterial({ ink, fill: true }));
+      g.add(box);
+      if (kind === "hp") {
+        const plus = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, 0.08), makeInkMaterial({ ink: INK.RED, fill: true }));
+        plus.position.y = 0.5;
+        g.add(plus);
+      }
     }
     g.position.copy(pos);
     g.position.y += 0.4;
     this.scene.add(g);
-    this.pickups.push({ kind, pos: pos.clone(), mesh: g, t: 0, alive: true });
+    this.pickups.push({
+      kind,
+      pos: pos.clone(),
+      mesh: g,
+      t: 0,
+      alive: true,
+      id,
+      weapon: opts.weapon,
+      life: opts.life ?? Infinity,
+    });
+  }
+
+  /** Remove a drop someone else claimed first. */
+  removePickup(id: number) {
+    for (const p of this.pickups) {
+      if (p.id !== id || !p.alive) continue;
+      p.alive = false;
+      this.scene.remove(p.mesh);
+    }
   }
 
   fireEnemyShot(e: Enemy, target: THREE.Vector3, speed: number, dmg: number, spit = false) {
@@ -546,10 +603,19 @@ export class Combat {
       const to = new THREE.Vector3().subVectors(r.center, origin);
       const dist = to.length();
       if (dist > range + 0.4) continue;
-      if (dist > 0.2 && to.normalize().dot(dir) < cosH) continue;
+      const toDir = to.clone().normalize();
+      if (dist > 0.2 && toDir.dot(dir) < cosH) continue;
       if (!this.world.hasLineOfSight(origin, r.center)) continue;
-      this.burst(r.center, this.hitInk, 8, 8);
-      this.onRemoteHit?.(r, dmg, false, r.center.clone());
+      // caught them looking the other way, at contact range: that is a finisher
+      const fromBehind = dist < 2.4 && r.forward && toDir.dot(r.forward) > 0.45;
+      this.burst(r.center, this.hitInk, fromBehind ? 16 : 8, fromBehind ? 11 : 8);
+      if (fromBehind) {
+        this.onRemoteExecute?.(r);
+        kill = true;
+        crit = true;
+      } else {
+        this.onRemoteHit?.(r, dmg, false, r.center.clone());
+      }
       any = true;
     }
     return { hit: any, kill, crit };
@@ -622,17 +688,34 @@ export class Combat {
     for (const pk of this.pickups) {
       if (!pk.alive) continue;
       pk.t += dt;
+      // battlefield drops fade out, or a long match buries the map in loot
+      if (pk.life !== Infinity) {
+        pk.life -= dt;
+        if (pk.life <= 0) {
+          pk.alive = false;
+          this.scene.remove(pk.mesh);
+          continue;
+        }
+        if (pk.life < 4) pk.mesh.visible = Math.floor(pk.life * 6) % 2 === 0;
+      }
       pk.mesh.position.y = pk.pos.y + 0.45 + Math.sin(pk.t * 3) * 0.12;
       pk.mesh.rotation.y += dt * 1.8;
+      // walk over it and it is yours — no pickup button on a phone
       if (player.alive && player.pos.distanceTo(pk.pos) < 1.4) {
+        if (pk.kind === "gun" && pk.weapon) {
+          if (!player.pickUpWeapon(pk.weapon)) continue;
+        } else if (pk.kind === "hp") {
+          if (player.hp >= player.maxHp) continue; // leave it for someone who needs it
+          player.addHp(40);
+        } else if (pk.kind === "nade") {
+          player.grenades = Math.min(5, player.grenades + 1);
+        } else {
+          for (const w of player.weapons) if (w.def.isGun) w.addAmmo(Math.round(w.def.magSize * 1.4));
+        }
         pk.alive = false;
         this.scene.remove(pk.mesh);
         this.audio.pickup();
-        if (pk.kind === "hp") player.addHp(40);
-        else if (pk.kind === "nade") player.grenades = Math.min(5, player.grenades + 1);
-        else {
-          for (const w of player.weapons) if (w.def.isGun) w.addAmmo(Math.round(w.def.magSize * 1.4));
-        }
+        this.onPickupTaken?.(pk.id);
       }
     }
     this.pickups = this.pickups.filter((p) => p.alive);

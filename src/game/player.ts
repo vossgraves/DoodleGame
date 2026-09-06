@@ -662,6 +662,42 @@ export class Player {
     this.switchTo((this.weaponIndex + dir + this.weapons.length) % this.weapons.length);
   }
 
+  /**
+   * Take a gun off the ground. Already carrying it? Top up the ammo instead of
+   * pointlessly swapping the same weapon in.
+   */
+  pickUpWeapon(kind: WeaponKind): boolean {
+    const def = DEFS[kind];
+    if (!def || !def.isGun) return false;
+
+    const have = this.weapons.findIndex((w) => w.def.kind === kind);
+    if (have >= 0) {
+      this.weapons[have].addAmmo(Math.round(def.magSize * 2));
+      return true;
+    }
+    // replace what is in your hands if that is a gun, else the first gun slot
+    let slot = this.weapon.def.isGun ? this.weaponIndex : this.weapons.findIndex((w) => w.def.isGun);
+    if (slot < 0) slot = 0;
+
+    const old = this.weapons[slot];
+    old.unequip();
+    this.rig.remove(old.root);
+    old.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.geometry) m.geometry.dispose();
+    });
+
+    const fresh = new Weapon(kind);
+    this.weapons[slot] = fresh;
+    this.rig.add(fresh.root);
+    if (this.weaponIndex === slot) {
+      this.weapon = fresh;
+      fresh.equip();
+    }
+    this.hooks.audio.switchWeapon();
+    return true;
+  }
+
   takeDamage(amount: number, from: THREE.Vector3 | null) {
     if (!this.alive) return;
     if (this.weapon.def.kind === "katana" && this.weapon.blocking && from) {

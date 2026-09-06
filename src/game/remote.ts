@@ -13,7 +13,7 @@
 import * as THREE from "three";
 import { humanoid, TYPES, type BodyParts, type TypeDef } from "./enemies";
 import { INK } from "./renderer";
-import { clamp, damp } from "./math";
+import { clamp, damp, rand } from "./math";
 
 /** Anything a bullet can find that is not an Enemy. */
 export interface NetTarget {
@@ -23,6 +23,8 @@ export interface NetTarget {
   center: THREE.Vector3;
   scale: number;
   ink: number;
+  /** which way they are facing — an execution has to come from behind */
+  forward: THREE.Vector3;
 }
 
 export const TEAM_INKS = [INK.BLUE, INK.RED] as const;
@@ -152,6 +154,9 @@ export class RemotePlayer implements NetTarget {
   private phase = 0;
   private walk = 0;
   private visible = false;
+  /** which way this body happens to fall, picked once per death */
+  private topple = 0;
+  private limp = 0;
 
   constructor(scene: THREE.Scene, id: string, name: string, team: number, ink: number) {
     this.scene = scene;
@@ -246,12 +251,24 @@ export class RemotePlayer implements NetTarget {
     P.xeyes.visible = !this.alive;
 
     if (!this.alive) {
-      // slumped on the page until they respawn
-      P.root.rotation.x = damp(P.root.rotation.x, Math.PI / 2.2, 6, dt);
+      // topple rather than slump: pick a direction once, then go limp
+      if (this.topple === 0) this.topple = rand(0.35, 1) * (Math.random() < 0.5 ? -1 : 1);
+      this.limp = damp(this.limp, 1, 7, dt);
+      P.root.rotation.x = damp(P.root.rotation.x, Math.PI / 2.1, 7, dt);
+      P.root.rotation.z = damp(P.root.rotation.z, this.topple * 0.55, 5, dt);
+      const l = this.limp;
+      P.larm.rotation.x = damp(P.larm.rotation.x, -0.4 - l * this.topple, 8, dt);
+      P.rarm.rotation.x = damp(P.rarm.rotation.x, -0.2 + l * this.topple * 1.3, 8, dt);
+      P.lleg.rotation.x = damp(P.lleg.rotation.x, l * 0.7, 8, dt);
+      P.rleg.rotation.x = damp(P.rleg.rotation.x, -l * 0.45, 8, dt);
+      P.torso.rotation.x = damp(P.torso.rotation.x, l * 0.3, 6, dt);
       if (this.tag) this.tag.visible = false;
       return;
     }
+    this.topple = 0;
+    this.limp = 0;
     P.root.rotation.x = damp(P.root.rotation.x, 0, 8, dt);
+    P.root.rotation.z = damp(P.root.rotation.z, 0, 8, dt);
     if (this.tag) this.tag.visible = true;
 
     P.lleg.rotation.x = s * 0.9 * w;
