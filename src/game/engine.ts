@@ -83,6 +83,8 @@ export interface HudSnap {
   skillReady: boolean;
   /** minimap blips in world space; the UI rotates them into the player's frame */
   radar: { x: number; z: number; hostile: boolean }[];
+  /** the map's footprint in world units, built once when the level loads */
+  radarWalls: { x: number; z: number; w: number; d: number; tall: boolean }[];
   radarSelf: { x: number; z: number; yaw: number };
   radarHalf: number;
 }
@@ -136,6 +138,7 @@ const defaultHud = (): HudSnap => ({
   skillActive: 0,
   skillReady: false,
   radar: [],
+  radarWalls: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
   radarHalf: 40,
 });
@@ -186,6 +189,25 @@ export class Game {
     if (this.swapWindow <= 0 || this.player.spentResource || !this.player.alive) return false;
     this.player.setLoadout(kinds, gunsmith, wardrobe);
     return true;
+  }
+
+  /**
+   * The map as seen from above, for the minimap. Small props are left out — at
+   * minimap scale they are noise, and what you actually navigate by is the
+   * buildings and the cover you can hide behind.
+   */
+  private mapFootprint() {
+    const half = getMap(this.mapKey).half;
+    const out: HudSnap["radarWalls"] = [];
+    for (const b of this.world.boxes) {
+      const w = b.maxx - b.minx;
+      const d = b.maxz - b.minz;
+      if (b.maxy < 0.7 || w < 1.2 || d < 1.2) continue;
+      // the arena's own boundary walls sit outside what the minimap shows
+      if (b.minx > half || b.maxx < -half || b.minz > half || b.maxz < -half) continue;
+      out.push({ x: b.minx, z: b.minz, w, d, tall: b.maxy > 4 });
+    }
+    return out;
   }
 
   /**
@@ -321,6 +343,7 @@ export class Game {
       gunsmith,
       wardrobe,
     });
+    this.hud.radarWalls = this.mapFootprint();
     this.player.adsToggle = localStorage.getItem("doodle_ads_toggle") === "1";
     this.player.reset(this.level.playerStart);
 

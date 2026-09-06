@@ -125,6 +125,7 @@ const emptyHud = (): HudSnap => ({
   uav: false,
   piloting: false,
   radar: [],
+  radarWalls: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
   radarHalf: 40,
   grappleStam: 1,
@@ -1722,16 +1723,17 @@ function LoadoutScreen({
 }
 
 /**
- * Minimap. Blips arrive in world space and get rotated into the player's frame
- * here, so "up" is always the way you are facing — which is what you actually
- * read a minimap for.
+ * Minimap. Up is always the way you are facing, so the whole map rotates around
+ * you rather than the other way about. The walls ride in one rotated group, so
+ * turning costs a transform rather than a pass over every rect.
  */
 function Minimap({ hud }: { hud: HudSnap }) {
   const R = 50;
-  const half = hud.radarHalf || 40;
+  // how much world fits in the disc: closer in than the whole map, or a big map
+  // shrinks to an unreadable smudge
+  const half = Math.min(hud.radarHalf || 40, 34);
   const scale = R / half;
   const me = hud.radarSelf;
-  // the player's own basis, straight out of the movement code
   const fwdX = -Math.sin(me.yaw);
   const fwdZ = -Math.cos(me.yaw);
   const rgtX = Math.cos(me.yaw);
@@ -1749,10 +1751,40 @@ function Minimap({ hud }: { hud: HudSnap }) {
     })
     .filter((b) => b.x * b.x + b.y * b.y < R * R);
 
+  // only the walls that could land inside the disc are worth drawing
+  const reach = half + 12;
+  const walls = hud.radarWalls.filter(
+    (w) => Math.abs(w.x + w.w / 2 - me.x) < reach && Math.abs(w.z + w.d / 2 - me.z) < reach,
+  );
+  const spin = `rotate(${(me.yaw * 180) / Math.PI}) scale(${scale}) translate(${-me.x} ${-me.z})`;
+
   return (
     <div className="minimap hud-bit">
       <svg viewBox="-58 -58 116 116" width="100%" height="100%" aria-hidden="true">
-        <circle cx="0" cy="0" r="53" fill="rgba(246,243,230,0.45)" stroke="var(--ink)" strokeWidth="2.5" />
+        <defs>
+          <clipPath id="mm-disc">
+            <circle cx="0" cy="0" r="52" />
+          </clipPath>
+        </defs>
+        <circle cx="0" cy="0" r="53" fill="rgba(246,243,230,0.82)" stroke="var(--ink)" strokeWidth="2.5" />
+        <g clipPath="url(#mm-disc)">
+          <g transform={spin}>
+            {walls.map((w, i) => (
+              <rect
+                key={i}
+                x={w.x}
+                y={w.z}
+                width={w.w}
+                height={w.d}
+                fill={w.tall ? "rgba(26,48,192,0.34)" : "rgba(26,48,192,0.14)"}
+                stroke="var(--ink)"
+                strokeWidth={w.tall ? 0.5 : 0.35}
+                strokeOpacity="0.75"
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </g>
+        </g>
         <line x1="0" y1="-53" x2="0" y2="-44" stroke="var(--ink)" strokeWidth="2.5" strokeLinecap="round" />
         {blips.map((b, i) => (
           <circle
@@ -1761,11 +1793,13 @@ function Minimap({ hud }: { hud: HudSnap }) {
             cy={b.y}
             r="4.2"
             fill={b.hostile ? "var(--red)" : "var(--ink)"}
-            opacity={b.hostile ? 0.95 : 0.55}
+            stroke="rgba(246,243,230,0.9)"
+            strokeWidth="1"
+            opacity={b.hostile ? 0.95 : 0.6}
           />
         ))}
         {/* you, always dead centre, always pointing up */}
-        <path d="M0 -8 L6 7 L0 3.5 L-6 7 Z" fill="var(--ink)" />
+        <path d="M0 -8 L6 7 L0 3.5 L-6 7 Z" fill="var(--ink)" stroke="rgba(246,243,230,0.9)" strokeWidth="1" />
       </svg>
     </div>
   );
