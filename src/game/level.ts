@@ -997,7 +997,206 @@ const bazaar: MapDef = {
   },
 };
 
-export const MAPS: MapDef[] = [district, rooftops, schoolyard, subway, sketchpad, bazaar];
+/**
+ * A prison island: one long cell block on the rock, with a harbour, a chemical
+ * plant, a headquarters and a lighthouse ringed around it, and the water at the
+ * arena wall. Built compact and vertical, so a battle royale circle always has
+ * two ways in and something to climb.
+ */
+const island: MapDef = {
+  key: "island",
+  name: "PEN ISLAND",
+  blurb: "a prison rock · cell block, harbour and a long swim",
+  half: 40,
+  playerStart: [0, 33],
+  build: (k) => {
+    k.arena(40, 18);
+
+    // The water. It sits a hair above the floor rather than below it, or the
+    // ground plane hides it completely and the island stops reading as one.
+    for (const [x, z, w, d] of [
+      [0, 37, 80, 8],
+      [0, -37, 80, 8],
+      [-37, 0, 8, 66],
+      [37, 0, 8, 66],
+    ] as [number, number, number, number][]) {
+      k.box(x, 0.02, z, w, 0.06, d, { ink: INK.BLUE, noCollide: true, fill: true });
+    }
+    // a scribbled shoreline so the edge is not a hard rectangle
+    for (let i = 0; i < 44; i++) {
+      const a = (i / 44) * Math.PI * 2;
+      const r = 33.5 + Math.sin(i * 2.3) * 1.6;
+      k.box(Math.cos(a) * r, 0.05, Math.sin(a) * r, 2.4, 0.1, 2.4, {
+        ink: INK.BLUE,
+        noCollide: true,
+      });
+    }
+
+    // ---- the cell block, dead centre and the reason anyone comes here -------
+    const cellW = 34;
+    const cellD = 12;
+    k.box(0, 0, 0, cellW, 4.2, cellD, { ink: k.inkWall });
+    k.deck(0, 4.2, 0, cellW, cellD, k.inkWall);
+    k.box(0, 4.2, 0, cellW - 2, 4.0, cellD - 2, { ink: k.inkWall });
+    k.deck(0, 8.2, 0, cellW - 2, cellD - 2, k.inkAccent);
+    k.windowRow(0, 0, cellW, cellD, 2, "z", 1);
+    k.windowRow(0, 0, cellW, cellD, 2, "z", -1);
+    // the cell rows themselves: a colonnade you can weave through at ground level
+    for (let i = -5; i <= 5; i++) {
+      if (i === 0) continue;
+      k.box(i * 3, 0, -cellD / 2 - 1.6, 0.5, 3.4, 3.2, { ink: INK.BLACK });
+      k.box(i * 3, 0, cellD / 2 + 1.6, 0.5, 3.4, 3.2, { ink: INK.BLACK });
+    }
+    // stairs up each end, so the roof is a fight rather than a camp
+    k.stairs(-cellW / 2 - 3, -6, 1, "x", 12, 0.36, 0.5, 3);
+    k.stairs(cellW / 2 + 3, 6, -1, "x", 12, 0.36, 0.5, 3);
+
+    // ---- harbour, south-west: containers and a jetty ------------------------
+    const container = (x: number, z: number, rot: 0 | 1, stack = 1) => {
+      const w = rot ? 3.2 : 8;
+      const d = rot ? 8 : 3.2;
+      for (let s = 0; s < stack; s++) {
+        k.box(x, s * 2.9, z, w, 2.8, d, { ink: s % 2 ? k.inkAccent : k.inkWall });
+      }
+    };
+    container(-26, 22, 0, 2);
+    container(-17, 24, 0, 1);
+    container(-28, 14, 1, 3);
+    container(-20, 15, 1, 1);
+    container(-33, 24, 0, 1);
+    k.deck(-24, 8.8, 18, 12, 10, k.inkAccent);
+    k.stairs(-14, 20, -1, "x", 12, 0.42, 0.5, 2.6);
+    // the jetty, out over the water
+    k.box(-24, 0, 33, 6, 0.8, 14, { ink: k.inkWall });
+    for (const z of [29, 33, 37]) {
+      k.box(-27, 0.8, z, 0.4, 1.6, 0.4, { ink: INK.BLACK, noShoot: true });
+      k.box(-21, 0.8, z, 0.4, 1.6, 0.4, { ink: INK.BLACK, noShoot: true });
+    }
+
+    // ---- chemical plant, north-east: tanks and pipework ---------------------
+    const tank = (x: number, z: number, r: number, h: number) => {
+      const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 12), k.mat(k.inkWall));
+      m.position.set(x, h / 2, z);
+      k.add(m);
+      k.world.addBox(x, 0, z, r * 1.8, h, r * 1.8);
+      // a ring band, so the tanks read as tanks and not as pillars
+      k.box(x, h * 0.6, z, r * 1.95, 0.35, r * 1.95, { ink: k.inkAccent, noCollide: true });
+    };
+    tank(22, -20, 3.4, 8);
+    tank(30, -14, 2.6, 6);
+    tank(20, -29, 2.4, 5.5);
+    // catwalk between the tanks
+    k.deck(25, 6.2, -18, 14, 3, k.inkAccent);
+    k.box(25, 6.2, -16.4, 14, 1.0, 0.3, { ink: k.inkAccent });
+    k.stairs(16, -18, 1, "x", 17, 0.37, 0.42, 2.4);
+    for (const [x, z] of [
+      [26, -25],
+      [17, -24],
+      [31, -22],
+    ] as [number, number][])
+      k.barrel(x, z, 1.6);
+
+    // ---- headquarters, north-west -------------------------------------------
+    k.building(-24, -22, 14, 12, 12);
+    k.deck(-24, 12, -22, 16, 14, k.inkAccent);
+    k.stairs(-14, -22, -1, "x", 14, 0.5, 0.5, 3);
+    k.box(-24, 0, -14, 10, 3.2, 0.6, { ink: k.inkWall });
+
+    // ---- lighthouse on the east point ----------------------------------------
+    const light = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.2, 16, 10), k.mat(k.inkWall));
+    light.position.set(32, 8, 14);
+    k.add(light);
+    k.world.addBox(32, 0, 14, 5.4, 16, 5.4);
+    k.box(32, 16, 14, 6, 1.4, 6, { ink: k.inkAccent });
+    k.box(32, 17.4, 14, 3, 1.6, 3, { ink: INK.ORANGE, fill: true, noCollide: true });
+    k.stairs(26, 14, 1, "x", 10, 0.5, 0.5, 2.4);
+    k.deck(28, 5, 14, 6, 5, k.inkAccent);
+
+    // ---- construction, south-east: open scaffolding --------------------------
+    for (let f = 0; f < 3; f++) {
+      k.deck(22, 3.4 + f * 3.4, 24, 14, 12, f % 2 ? k.inkAccent : k.inkWall);
+      for (const [ox, oz] of [
+        [-6.5, -5.5],
+        [6.5, -5.5],
+        [-6.5, 5.5],
+        [6.5, 5.5],
+      ] as [number, number][])
+        k.box(22 + ox, f * 3.4, 24 + oz, 0.4, 3.4, 0.4, { ink: INK.BLACK, noShoot: true });
+      k.stairs(f % 2 ? 15.5 : 28.5, 24, f % 2 ? 1 : -1, "x", 10, 0.34, 0.42, 2.2);
+    }
+
+    // ---- the rock: cover scattered along the paths between all of it ---------
+    for (const [x, z, w, h, d] of [
+      [-10, 18, 5, 1.3, 1.4],
+      [9, 17, 4, 1.2, 1.5],
+      [-8, -14, 4.5, 1.4, 1.3],
+      [8, -15, 5, 1.2, 1.4],
+      [0, 24, 7, 1.1, 1.2],
+      [0, -24, 6, 1.3, 1.2],
+      [-32, 2, 3.5, 1.6, 5],
+      [32, -2, 3.5, 1.6, 5],
+      [-18, 32, 4, 1.2, 1.2],
+      [16, 33, 4, 1.2, 1.2],
+    ] as [number, number, number, number, number][])
+      k.box(x, 0, z, w, h, d);
+
+    for (const [x, z] of [
+      [-12, 8],
+      [-11.2, 8.6],
+      [12, -8],
+      [11.3, -8.5],
+      [-30, -8],
+      [30, 8],
+      [4, 28],
+      [-4, -30],
+      [26, 6],
+      [-26, -4],
+    ] as [number, number][])
+      k.crate(x, z, rand(0.8, 1.2));
+
+    for (const [x, z] of [
+      [-14, 0],
+      [14, 0],
+      [0, 16],
+      [0, -16],
+      [-30, 30],
+      [30, -30],
+    ] as [number, number][])
+      k.lamp(x, z, 5);
+
+    k.planes(3, 26);
+
+    for (const [x, z] of [
+      [0, 33],
+      [0, -33],
+      [-24, 30],
+      [24, 30],
+      [-30, -30],
+      [30, -28],
+      [-34, 8],
+      [34, -8],
+      [-18, 6],
+      [18, -6],
+      [8, 30],
+      [-8, -30],
+    ] as [number, number][])
+      k.spawn(x, z);
+
+    k.sniper(0, 8.6, 0);
+    k.sniper(-24, 12.4, -22);
+    k.sniper(32, 16.6, 14);
+    k.sniper(22, 13.8, 24);
+    k.sniper(-24, 9.2, 18);
+    k.sniper(25, 6.6, -18);
+
+    k.pickup(0, 0.6, 0);
+    k.pickup(-24, 0.6, 18);
+    k.pickup(22, 0.6, -20);
+    k.pickup(0, 8.8, 0);
+  },
+};
+
+export const MAPS: MapDef[] = [district, rooftops, schoolyard, subway, sketchpad, bazaar, island];
 export const DEFAULT_MAP = district.key;
 
 export function getMap(key: string): MapDef {
