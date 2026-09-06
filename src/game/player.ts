@@ -1071,6 +1071,13 @@ export class Player {
   /** metres walked since the last footstep */
   private stepDist = 0;
   grapple!: Grapple;
+  /** false when the operator skill in this loadout is not the grappler */
+  grappleEnabled = true;
+  /** true while a skill has replaced the gun in your hands */
+  weaponHidden = false;
+  /** which skill model to hold instead, if any */
+  private skillModels = new Map<string, THREE.Group>();
+  private skillShown = "";
   dashCd = 0;
   airJumps = 1;
   sprinting = false;
@@ -1108,6 +1115,7 @@ export class Player {
     hooks.camera.add(this.rig);
     for (const w of this.weapons) this.rig.add(w.root);
     hooks.scene.add(hooks.camera);
+    this.buildSkillModels();
     this.grapple = new Grapple({
       world: hooks.world,
       scene: hooks.scene,
@@ -1293,6 +1301,48 @@ export class Player {
 
   addHp(n: number) {
     this.hp = Math.min(this.maxHp, this.hp + n);
+  }
+
+  /**
+   * The things a skill puts in your hands instead of a gun. Built once and
+   * hidden, since a skill can come up several times in a match.
+   */
+  private buildSkillModels() {
+    const ink = () => makeInkMaterial({ ink: INK.BLUE, shadeBias: -0.15 });
+    const dark = () => makeInkMaterial({ ink: INK.BLACK, shadeBias: -0.1 });
+
+    const flame = new THREE.Group();
+    flame.scale.setScalar(0.48);
+    cyl(0.075, 0.7, 0, 0.02, -0.42, ink(), flame); // barrel
+    cyl(0.11, 0.16, 0, 0.02, -0.78, dark(), flame); // flared nozzle
+    bx(0.1, 0.2, 0.16, 0, -0.14, 0.06, dark(), flame); // grip
+    cyl(0.13, 0.42, 0.16, 0.06, 0.34, ink(), flame, "z"); // fuel bottle slung back
+    bx(0.03, 0.03, 0.34, 0.1, 0.04, 0.06, dark(), flame); // hose
+    flame.visible = false;
+    this.rig.add(flame);
+    this.skillModels.set("flamethrower", flame);
+
+    const bow = new THREE.Group();
+    bow.scale.setScalar(0.48);
+    // two limbs and a string, held out to the left the way a bow is
+    bx(0.03, 0.5, 0.03, -0.1, 0.34, -0.3, ink(), bow).rotation.x = 0.35;
+    bx(0.03, 0.5, 0.03, -0.1, -0.3, -0.3, ink(), bow).rotation.x = -0.35;
+    bx(0.05, 0.24, 0.06, -0.1, 0.02, -0.3, dark(), bow);
+    bx(0.012, 0.012, 1.0, -0.1, 0.02, -0.18, dark(), bow); // the string, drawn back
+    bx(0.03, 0.03, 0.6, -0.02, 0.02, -0.34, ink(), bow); // nocked bolt
+    bow.visible = false;
+    this.rig.add(bow);
+    this.skillModels.set("sparrow", bow);
+  }
+
+  /** Show the model a skill puts in your hands, or none. */
+  setSkillModel(name: string) {
+    if (name === this.skillShown) return;
+    const prev = this.skillModels.get(this.skillShown);
+    if (prev) prev.visible = false;
+    this.skillShown = name;
+    const next = this.skillModels.get(name);
+    if (next) next.visible = true;
   }
 
   /**
@@ -1483,7 +1533,8 @@ export class Player {
     }
     this.dashCd = Math.max(0, this.dashCd - dt);
     // the rope pulls and constrains before the body is integrated
-    this.grapple.update(dt);
+    if (this.grappleEnabled) this.grapple.update(dt);
+    else if (this.grapple.state !== "idle") this.grapple.detach(false);
     // hauling yourself onto a ledge you ran into, rather than bouncing off it
     if (!this.onGround && this.mantleCd <= 0 && i.move.y > 0.3 && this.vel.y < 8 && !this.grapple.attached) {
       this.tryMantle();
@@ -1760,7 +1811,8 @@ export class Player {
       w.root.rotation.y += e * 0.35;
       w.root.rotation.z += e * 0.6;
     }
-    if (w.def.kind === "sniper" && ads > 0.8) w.root.visible = false;
+    if (this.weaponHidden) w.root.visible = false;
+    else if (w.def.kind === "sniper" && ads > 0.8) w.root.visible = false;
     else w.root.visible = this.alive;
     void dt;
   }

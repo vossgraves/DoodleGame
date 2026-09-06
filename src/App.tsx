@@ -11,6 +11,7 @@ import {
   type GunBuild,
   type Gunsmith,
 } from "./game/attachments";
+import { SKILLS, SKILL_ORDER, sanitizeSkill, type SkillKind } from "./game/skills";
 import {
   CAMOS,
   CHARMS,
@@ -129,6 +130,10 @@ const emptyHud = (): HudSnap => ({
   grappleStam: 1,
   grappleOn: false,
   grappleAim: false,
+  skill: "grappler",
+  skillCharge: 0,
+  skillActive: 0,
+  skillReady: false,
 });
 
 function isTouchDevice() {
@@ -163,6 +168,7 @@ export default function App() {
   const [mapKey, setMapKey] = useState(() => localStorage.getItem("doodle_map") || DEFAULT_MAP);
   const [loadout, setLoadout] = useState<WeaponKind[]>(loadLoadout);
   const [gunsmith, setGunsmith] = useState<Gunsmith>(loadGunsmith);
+  const [skill, setSkill] = useState<SkillKind>(() => sanitizeSkill(localStorage.getItem("doodle_skill")));
   const [weaponKills, setWeaponKills] = useState<KillLog>(loadKills);
   const [wardrobe, setWardrobe] = useState<Wardrobe>(() => loadWardrobe(loadKills()));
   const [playerName, setPlayerName] = useState(() => localStorage.getItem("doodle_name") || "");
@@ -200,6 +206,8 @@ export default function App() {
   gunsmithRef.current = gunsmith;
   const wardrobeRef = useRef(wardrobe);
   wardrobeRef.current = wardrobe;
+  const skillRef = useRef(skill);
+  skillRef.current = skill;
   const killsRef = useRef(weaponKills);
   killsRef.current = weaponKills;
 
@@ -267,6 +275,9 @@ export default function App() {
       }
       const worn = enforceUnlocks(sanitizeWardrobe(st?.skins), log);
       if (Object.keys(worn).length) setWardrobe(worn);
+      if (typeof (st as { skill?: unknown })?.skill === "string") {
+        setSkill(sanitizeSkill((st as { skill?: unknown }).skill));
+      }
       if (!localStorage.getItem("doodle_name")) setPlayerName(r.user.username);
     });
     return () => {
@@ -303,7 +314,7 @@ export default function App() {
     if (screen !== "game") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas, mode, mapKey, loadoutRef.current, gunsmithRef.current, wardrobeRef.current);
+    const g = new Game(canvas, mode, mapKey, loadoutRef.current, gunsmithRef.current, wardrobeRef.current, skillRef.current);
     g.onWeaponKill = (k) => {
       setWeaponKills((prev) => {
         const next = { ...prev, [k]: (prev[k] ?? 0) + 1 };
@@ -416,6 +427,12 @@ export default function App() {
           gunsmith={gunsmith}
           wardrobe={wardrobe}
           weaponKills={weaponKills}
+          skill={skill}
+          onSkill={(k) => {
+            setSkill(k);
+            localStorage.setItem("doodle_skill", k);
+            account.saveProfileSoon(loadout, { gunsmith, skins: wardrobe, wkills: weaponKills, skill: k });
+          }}
           onChange={(l) => {
             setLoadout(l);
             localStorage.setItem("doodle_loadout", JSON.stringify(l));
@@ -515,6 +532,13 @@ export default function App() {
                 gunsmith={gunsmith}
                 wardrobe={wardrobe}
                 weaponKills={weaponKills}
+                skill={skill}
+                onSkill={(k) => {
+                  setSkill(k);
+                  localStorage.setItem("doodle_skill", k);
+                  account.saveProfileSoon(loadout, { gunsmith, skins: wardrobe, wkills: weaponKills, skill: k });
+                  gameRef.current?.setSkill(k);
+                }}
                 onChange={(l) => {
                   setLoadout(l);
                   localStorage.setItem("doodle_loadout", JSON.stringify(l));
@@ -1531,7 +1555,9 @@ function LoadoutScreen({
   gunsmith,
   wardrobe,
   weaponKills,
+  skill,
   onChange,
+  onSkill,
   onGunsmith,
   onWardrobe,
   onBack,
@@ -1540,7 +1566,9 @@ function LoadoutScreen({
   gunsmith: Gunsmith;
   wardrobe: Wardrobe;
   weaponKills: KillLog;
+  skill: SkillKind;
   onChange: (l: WeaponKind[]) => void;
+  onSkill: (k: SkillKind) => void;
   onGunsmith: (g: Gunsmith) => void;
   onWardrobe: (w: Wardrobe) => void;
   onBack: () => void;
@@ -1638,6 +1666,33 @@ function LoadoutScreen({
               >
                 <WeaponIcon kind={w.kind} />
                 <span className="wname">{w.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <div className="mb-2 flex items-center gap-3 border-b-2 border-[var(--ink)] text-2xl">
+            <span>operator skill</span>
+            <span className="text-lg opacity-60">{SKILLS[skill].name}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {SKILL_ORDER.map((k) => (
+              <button
+                key={k}
+                className={`att-chip ${skill === k ? "on" : ""}`}
+                onClick={() => onSkill(k)}
+                title={SKILLS[k].blurb}
+              >
+                <b>{SKILLS[k].name}</b>
+                <em>{SKILLS[k].blurb}</em>
+                <span className="mods">
+                  <i className="up">
+                    {SKILLS[k].charge
+                      ? `${SKILLS[k].duration}s · recharges in ${SKILLS[k].charge}s`
+                      : "always on"}
+                  </i>
+                </span>
               </button>
             ))}
           </div>
@@ -1940,12 +1995,26 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
         </div>
       </div>
 
-      <div className={`grapple-meter hud-bit ${hud.grappleOn ? "on" : ""} ${hud.grappleAim ? "aimed" : ""}`}>
-        <div className="text-[10px] tracking-widest">ROPE</div>
-        <div className="fm-tube">
-          <div className="fm-fill" style={{ height: `${hud.grappleStam * 100}%` }} />
+      {hud.skill === "grappler" ? (
+        <div className={`grapple-meter hud-bit ${hud.grappleOn ? "on" : ""} ${hud.grappleAim ? "aimed" : ""}`}>
+          <div className="text-[10px] tracking-widest">ROPE</div>
+          <div className="fm-tube">
+            <div className="fm-fill" style={{ height: `${hud.grappleStam * 100}%` }} />
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className={`grapple-meter hud-bit ${hud.skillActive > 0 ? "on" : ""} ${hud.skillReady ? "aimed" : ""}`}>
+          <div className="text-[10px] tracking-widest">{hud.skill.slice(0, 5).toUpperCase()}</div>
+          <div className="fm-tube">
+            <div
+              className="fm-fill"
+              style={{
+                height: `${(hud.skillActive > 0 ? hud.skillActive / (SKILLS[hud.skill as SkillKind]?.duration || 1) : hud.skillCharge) * 100}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <div className="absolute left-0 right-0 top-[22%] pointer-events-none">
         {hud.message && <div className="msg-main show">{hud.message}</div>}

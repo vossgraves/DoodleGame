@@ -6,6 +6,7 @@ import { AudioSys } from "./audio";
 import { buildLevel, disposeLevel, getMap, DEFAULT_MAP, type Level, type Mode } from "./level";
 import { ZoneView } from "./zone";
 import { Streaks, type StreakKind, type StreakTarget } from "./streaks";
+import { Skills, sanitizeSkill } from "./skills";
 
 /** how long a fallen player's kit stays on the ground */
 const DROP_LIFE = 30;
@@ -75,6 +76,11 @@ export interface HudSnap {
   grappleStam: number;
   grappleOn: boolean;
   grappleAim: boolean;
+  /** operator skill: which one, how charged, and how long it has left */
+  skill: string;
+  skillCharge: number;
+  skillActive: number;
+  skillReady: boolean;
   /** minimap blips in world space; the UI rotates them into the player's frame */
   radar: { x: number; z: number; hostile: boolean }[];
   radarSelf: { x: number; z: number; yaw: number };
@@ -125,6 +131,10 @@ const defaultHud = (): HudSnap => ({
   grappleStam: 1,
   grappleOn: false,
   grappleAim: false,
+  skill: "grappler",
+  skillCharge: 0,
+  skillActive: 0,
+  skillReady: false,
   radar: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
   radarHalf: 40,
@@ -166,6 +176,7 @@ export class Game {
   match!: MatchNet;
   zoneView!: ZoneView;
   streaks!: Streaks;
+  skills!: Skills;
 
   /**
    * Swap kit during the post-respawn window. Guarded here rather than in the UI
@@ -234,6 +245,17 @@ export class Game {
     return out;
   }
 
+  /** Call in the operator skill, if it is charged. */
+  useSkill() {
+    return this.skills.use();
+  }
+
+  /** Swap the operator skill, e.g. during the post-respawn window. */
+  setSkill(k: string) {
+    this.skills.setKind(sanitizeSkill(k));
+    this.player.grappleEnabled = this.skills.kind === "grappler";
+  }
+
   /** Call in an earned streak. */
   useStreak(kind: StreakKind) {
     return this.streaks.use(kind);
@@ -261,6 +283,7 @@ export class Game {
     loadout?: WeaponKind[],
     gunsmith?: Gunsmith,
     wardrobe?: Wardrobe,
+    skill?: string,
   ) {
     this.canvas = canvas;
     this.mode = mode;
@@ -333,6 +356,8 @@ export class Game {
       localAlive: () => this.player.alive,
       mapExtent: () => getMap(this.mapKey).half,
       world: this.world,
+      decoys: () => this.skills.liveDecoys(),
+      hidden: () => this.skills.untargetable,
       localBody: () => ({
         pos: this.player.pos,
         center: this.player.center,
@@ -378,6 +403,21 @@ export class Game {
     };
     this.combat.onPickupTaken = (id) => this.match.reportPickup(id);
     this.zoneView = new ZoneView(this.R.scene);
+    this.skills = new Skills({
+      scene: this.R.scene,
+      world: this.world,
+      hostiles: () => this.streakTargets(),
+      eye: () => this.player.eye,
+      pos: () => this.player.pos,
+      forward: () => this.player.forward,
+      yaw: () => this.player.yaw,
+      boom: (at, r, d) => this.combat.explode(at, r, d, this.player),
+      tracer: (a, b) => this.combat.tracer(a, b),
+      announce: (main, sub) => this.announce(main, sub),
+    });
+    this.skills.setKind(sanitizeSkill(skill));
+    this.player.grappleEnabled = this.skills.kind === "grappler";
+
     this.streaks = new Streaks({
       scene: this.R.scene,
       world: this.world,
@@ -565,6 +605,7 @@ export class Game {
     // online you come back; the match, not the run, is what ends.
     // reportDeath does the announcing, because it knows who killed you.
     this.streaks.onDeath();
+    this.skills.onDeath();
     if (this.match.inMatch) {
       this.match.reportDeath();
       return;
@@ -625,6 +666,11 @@ export class Game {
         this.combat.remotes = [];
       }
       this.streaks.update(dt);
+      this.skills.update(dt, this.input.down("fire"));
+      this.player.weaponHidden = this.skills.overridesWeapon;
+      this.player.setSkillModel(this.skills.overridesWeapon ? this.skills.kind : "");
+      // the skill key doubles as the grapple key: whichever this loadout runs
+      if (!this.player.grappleEnabled && this.input.pressed("grapple")) this.skills.use();
       this.player.frozen = this.streaks.piloting;
       const view = this.streaks.cameraView();
       if (view) {
@@ -728,6 +774,10 @@ export class Game {
     this.hud.grappleStam = this.player.grapple.stamina;
     this.hud.grappleOn = this.player.grapple.attached;
     this.hud.grappleAim = this.player.grapple.hasTarget;
+    this.hud.skill = this.skills.kind;
+    this.hud.skillCharge = this.skills.charge;
+    this.hud.skillActive = this.skills.activeT;
+    this.hud.skillReady = this.skills.ready;
     // spending anything — a bullet, a grenade, a swing — closes the window
     this.hud.canSwap =
       this.match.inMatch && this.player.alive && this.swapWindow > 0 && !this.player.spentResource;
@@ -760,6 +810,7 @@ export class Game {
     this.combat.clear();
     this.match.leave();
     this.streaks.dispose();
+    this.skills.dispose();
     this.player.grapple.dispose();
     this.zoneView.dispose(this.R.scene);
     disposeLevel(this.R.scene, this.level);

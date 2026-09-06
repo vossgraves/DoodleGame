@@ -83,6 +83,10 @@ export interface MatchHooks {
   world: World;
   /** the local player as something a bot can aim at */
   localBody: () => { pos: THREE.Vector3; center: THREE.Vector3; headPos: THREE.Vector3; alive: boolean };
+  /** decoys the local player has out, which bots should shoot at instead */
+  decoys?: () => { id: string; pos: THREE.Vector3; center: THREE.Vector3; alive: boolean }[];
+  /** true while the local player cannot be picked as a target at all */
+  hidden?: () => boolean;
   /** scatter what a fallen player left behind; ids are shared so drops match everywhere */
   dropAt: (pos: [number, number, number], weapon: string | null, ids: [number, number]) => void;
   removeDrop: (id: number) => void;
@@ -327,16 +331,21 @@ export class MatchNet {
   private botCandidates(): BotCandidate[] {
     const out: BotCandidate[] = [];
     const myId = this.net.id;
-    if (myId) {
+    const myTeam = myId ? (this.roster.get(myId)?.team ?? 0) : 0;
+    if (myId && !this.hooks.hidden?.()) {
       const body = this.hooks.localBody();
       out.push({
         id: myId,
-        team: this.roster.get(myId)?.team ?? 0,
+        team: myTeam,
         alive: body.alive,
         pos: body.pos,
         center: body.center,
         headPos: body.headPos,
       });
+    }
+    // decoys stand in for you: same team, so they draw exactly your enemies
+    for (const d of this.hooks.decoys?.() ?? []) {
+      out.push({ id: d.id, team: myTeam, alive: d.alive, pos: d.pos, center: d.center, headPos: d.center });
     }
     for (const [id, r] of this.remotes) {
       // a bot's own RemotePlayer is presentation only; its Bot is the real thing

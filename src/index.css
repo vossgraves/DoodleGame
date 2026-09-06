@@ -1275,3 +1275,8 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   border-color: var(--green);
   color: var(--green);
 }
+
+/* the skill meter shares the rope meter's slot, so it needs the same ready cue */
+.grapple-meter.aimed .fm-fill {
+  background: repeating-linear-gradient(-55deg, var(--green) 0 2px, transparent 2px 5px);
+}
