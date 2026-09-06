@@ -59,6 +59,10 @@ export interface RosterRow {
   team: number;
   kills: number;
   deaths: number;
+  /** longest run of kills without dying, for the end-of-match card */
+  best?: number;
+  /** kills since last death, tracked by the host to feed `best` */
+  run?: number;
   /** battle royale only: eliminated, no respawn coming */
   out?: boolean;
   /** filled by the host rather than a person */
@@ -400,13 +404,10 @@ export class MatchNet {
     if (!bot.takeDamage(amount, by)) return;
 
     if (this.mode === "br") bot.respawns = false;
+    this.scoreDeath(botId);
     const row = this.roster.get(botId);
-    if (row) {
-      row.deaths += 1;
-      if (this.mode === "br") row.out = true;
-    }
-    const killer = this.roster.get(by);
-    if (killer) killer.kills += 1;
+    if (row && this.mode === "br") row.out = true;
+    this.scoreKill(by);
     const drops = this.dropIds();
     const at: [number, number, number] = [+bot.pos.x.toFixed(1), +bot.pos.y.toFixed(1), +bot.pos.z.toFixed(1)];
     this.net.send("pdead", { killer: by, who: botId, at, gun: bot.dropWeapon, drops });
@@ -415,7 +416,10 @@ export class MatchNet {
       this.hooks.feed(`ERASED ${bot.name}`, 100);
       this.hooks.localKill();
     }
-    else if (killer && row) this.hooks.feed(`${killer.name} erased ${row.name}`, 0);
+    else {
+      const killer = this.roster.get(by);
+      if (killer && row) this.hooks.feed(`${killer.name} erased ${row.name}`, 0);
+    }
     const rp = this.remotes.get(botId);
     if (rp) rp.alive = false;
     this.sendScores();
@@ -547,6 +551,22 @@ export class MatchNet {
     const out = [];
     for (const r of this.remotes.values()) if (this.canHurt(r.id)) out.push(r);
     return out;
+  }
+
+  /** A kill also extends that player's run, which is what the MVP card shows. */
+  private scoreKill(id: string | undefined) {
+    const r = id ? this.roster.get(id) : undefined;
+    if (!r) return;
+    r.kills += 1;
+    r.run = (r.run ?? 0) + 1;
+    r.best = Math.max(r.best ?? 0, r.run);
+  }
+
+  private scoreDeath(id: string | undefined) {
+    const r = id ? this.roster.get(id) : undefined;
+    if (!r) return;
+    r.deaths += 1;
+    r.run = 0;
   }
 
   scoreboard(): RosterRow[] {
@@ -698,11 +718,11 @@ export class MatchNet {
       const victim = this.roster.get(whoId);
       // everyone spawns the same drops from the same ids, so no round trip is needed
       if (d.at && d.drops) this.hooks.dropAt(d.at, d.gun ?? null, d.drops);
-      const killer = d.killer ? this.roster.get(d.killer) : null;
-      if (victim) victim.deaths += 1;
-      if (killer) killer.kills += 1;
+      this.scoreDeath(whoId);
+      this.scoreKill(d.killer);
       if (victim) {
         const vn = victim.name;
+        const killer = d.killer ? this.roster.get(d.killer) : null;
         if (d.killer === net.id) {
           this.hooks.feed(`ERASED ${vn}`, 100);
           this.hooks.localKill();
@@ -860,10 +880,9 @@ export class MatchNet {
     this.net.broadcast("pdead", { killer, at, gun, drops });
     // drop our own kit locally as well; the message does not come back to us
     this.hooks.dropAt(at, gun, drops);
-    const me = this.roster.get(this.net.id!);
-    if (me) me.deaths += 1;
+    this.scoreDeath(this.net.id!);
+    this.scoreKill(killer ?? undefined);
     const k = killer ? this.roster.get(killer) : null;
-    if (k) k.kills += 1;
     if (this.net.isHost) {
       this.sendScores();
       this.checkWin();
@@ -874,6 +893,7 @@ export class MatchNet {
     // name whoever did it, the way a kill cam would
     const byName = k?.name;
     if (this.mode === "br") {
+      const me = this.roster.get(this.net.id!);
       if (me) me.out = true;
       this.pendingRespawn = false;
       this.hooks.announce("ERASED", byName ? `${byName} put you out` : "you are out");

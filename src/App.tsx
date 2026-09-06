@@ -1321,19 +1321,48 @@ function Online({
 
   // ---- match over ----
   if (m.state === "over") {
+    const board = m.scoreboard();
+    const mvp = board[0];
+    const mine = board.find((r) => r.id === m.myId);
     return (
       <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.72)] p-4">
-        <div className="ink-panel max-w-[520px] px-10 py-8 text-center">
+        <div className="ink-panel max-w-[640px] px-10 py-8 text-center">
           <h2 className="m-0 font-[Caveat,cursive] text-5xl text-[var(--red)]">{m.winner} wins</h2>
-          <div className="mt-4 text-left text-xl">
-            {m.scoreboard().map((r) => (
-              <div key={r.id} className="flex justify-between gap-6">
+
+          {mvp && (
+            <div className="mvp-card mt-5">
+              <div className="text-sm uppercase tracking-[0.2em] opacity-60">
+                {mvp.id === m.myId ? "that was you" : "top of the page"}
+              </div>
+              <div className="font-[Caveat,cursive] text-5xl leading-tight">{mvp.name}</div>
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-5 text-xl">
+                <span>
+                  <b className="text-3xl">{mvp.kills}</b> kills
+                </span>
+                <span>
+                  <b className="text-3xl">{mvp.deaths}</b> deaths
+                </span>
+                <span>
+                  <b className="text-3xl">{mvp.best ?? 0}</b> best run
+                </span>
+              </div>
+              {mine && mine.id !== mvp.id && (
+                <div className="mt-3 text-lg opacity-70">
+                  you finished #{board.indexOf(mine) + 1} · {mine.kills}/{mine.deaths}, best run {mine.best ?? 0}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-5 text-left text-xl">
+            {board.map((r, i) => (
+              <div key={r.id} className="flex justify-between gap-6 border-b border-[var(--ink)] py-0.5">
                 <span className={r.id === m.myId ? "text-[var(--red)]" : ""}>
-                  {r.name}
+                  <span className="opacity-50">{i + 1}.</span> {r.name}
                   {r.id === m.myId ? " (you)" : ""}
                 </span>
                 <span className="opacity-70">
-                  {r.kills} K · {r.deaths} D
+                  {r.kills} K · {r.deaths} D · {r.best ?? 0} run
                 </span>
               </div>
             ))}
