@@ -3,8 +3,9 @@ import { Game, type GameState, type HudSnap } from "./game/engine";
 import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
 import { WEAPONS, sanitizeLoadout, type WeaponKind } from "./game/player";
 import { SCORE_TARGET, type MatchMode, type MatchNet } from "./game/match";
+import * as account from "./game/account";
 
-type Screen = "menu" | "howto" | "settings" | "loadout" | "game";
+type Screen = "menu" | "howto" | "settings" | "loadout" | "account" | "game";
 
 const GUNS = WEAPONS.filter((w) => w.isGun);
 const isGun = (k: WeaponKind) => GUNS.some((g) => g.kind === k);
@@ -70,6 +71,8 @@ export default function App() {
   const [matchMode, setMatchMode] = useState<MatchMode>("ffa");
   // MatchNet lives outside React; bump this to re-read it
   const [netTick, setNetTick] = useState(0);
+  const [me, setMe] = useState<account.Account | null>(null);
+  const [stats, setStats] = useState<account.Stats | null>(null);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
   const [gstate, setGstate] = useState<GameState>("playing");
   const [touch, setTouch] = useState(false);
@@ -84,6 +87,23 @@ export default function App() {
 
   useEffect(() => {
     setTouch(isTouchDevice());
+  }, []);
+
+  // Resume a saved session if there is one. No backend just means stay signed out.
+  useEffect(() => {
+    let cancelled = false;
+    account.me().then((r) => {
+      if (cancelled || !r) return;
+      setMe(r.user);
+      setStats(r.stats);
+      if (Array.isArray(r.profile?.loadout) && r.profile.loadout.length) {
+        setLoadout(sanitizeLoadout(r.profile.loadout));
+      }
+      if (!localStorage.getItem("doodle_name")) setPlayerName(r.user.username);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const killGame = useCallback(() => {
@@ -169,15 +189,39 @@ export default function App() {
           onSettings={() => setScreen("settings")}
           onLoadout={() => setScreen("loadout")}
           onOnline={() => launch("arena")}
+          onAccount={() => setScreen("account")}
+          me={me}
         />
       )}
       {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touch} />}
+      {screen === "account" && (
+        <AccountScreen
+          me={me}
+          stats={stats}
+          onSignedIn={(user, profile, s) => {
+            setMe(user);
+            setStats(s);
+            if (profile?.loadout?.length) setLoadout(sanitizeLoadout(profile.loadout));
+            if (!localStorage.getItem("doodle_name")) {
+              setPlayerName(user.username);
+              localStorage.setItem("doodle_name", user.username);
+            }
+          }}
+          onSignedOut={() => {
+            setMe(null);
+            setStats(null);
+          }}
+          onBack={() => setScreen("menu")}
+        />
+      )}
       {screen === "loadout" && (
         <LoadoutScreen
           loadout={loadout}
           onChange={(l) => {
             setLoadout(l);
             localStorage.setItem("doodle_loadout", JSON.stringify(l));
+            // no-ops when signed out; localStorage stays the source of truth then
+            void account.saveProfile(l, {});
           }}
           onBack={() => setScreen("menu")}
         />
@@ -260,6 +304,8 @@ function Menu({
   onSettings,
   onLoadout,
   onOnline,
+  onAccount,
+  me,
 }: {
   bestD: number;
   bestZ: number;
@@ -271,6 +317,8 @@ function Menu({
   onSettings: () => void;
   onLoadout: () => void;
   onOnline: () => void;
+  onAccount: () => void;
+  me: account.Account | null;
 }) {
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
@@ -335,6 +383,9 @@ function Menu({
           </button>
           <button className="ink-btn" onClick={onSettings}>
             settings
+          </button>
+          <button className="ink-btn" onClick={onAccount}>
+            {me ? me.username : "sign in"}
           </button>
         </div>
         <p className="mt-5 text-base opacity-60">click a card to scribble yourself in</p>
@@ -467,6 +518,138 @@ function Settings({
         <button className="ink-btn mt-8" onClick={onBack}>
           back
         </button>
+      </div>
+    </div>
+  );
+}
+
+function AccountScreen({
+  me,
+  stats,
+  onSignedIn,
+  onSignedOut,
+  onBack,
+}: {
+  me: account.Account | null;
+  stats: account.Stats | null;
+  onSignedIn: (u: account.Account, p: account.Profile | null, s: account.Stats | null) => void;
+  onSignedOut: () => void;
+  onBack: () => void;
+}) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const user = mode === "register" ? await account.register(username, password) : await account.login(username, password);
+      const full = await account.me();
+      onSignedIn(user, full?.profile ?? null, full?.stats ?? null);
+      setPassword("");
+      onBack();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    }
+    setBusy(false);
+  };
+
+  if (me) {
+    return (
+      <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
+        <div className="ink-panel w-full max-w-[520px] px-8 py-7 text-center">
+          <h2 className="m-0 font-[Caveat,cursive] text-5xl">{me.username}</h2>
+          <p className="mt-1 text-lg opacity-70">your loadout and scores follow you to any device</p>
+          {stats && (
+            <div className="mt-5 text-left text-xl">
+              {(
+                [
+                  ["kills", stats.kills],
+                  ["deaths", stats.deaths],
+                  ["wins", stats.wins],
+                  ["matches", stats.matches],
+                  ["best · district", stats.best_district],
+                  ["best · zombies", stats.best_zombies],
+                ] as [string, number][]
+              ).map(([k, v]) => (
+                <div key={k} className="flex justify-between border-b border-[var(--ink)] py-1">
+                  <span className="opacity-75">{k}</span>
+                  <b>{v}</b>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mt-6 flex flex-col gap-3">
+            <button
+              className="ink-btn"
+              onClick={async () => {
+                await account.logout();
+                onSignedOut();
+              }}
+            >
+              sign out
+            </button>
+            <button className="ink-btn" onClick={onBack}>
+              back
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
+      <div className="ink-panel w-full max-w-[480px] px-8 py-7 text-center">
+        <h2 className="m-0 font-[Caveat,cursive] text-5xl">{mode === "register" ? "new doodler" : "sign in"}</h2>
+        <p className="mt-1 text-lg opacity-70">optional — the game plays fine without an account</p>
+
+        <form
+          className="mt-5 flex flex-col items-center gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!busy) void submit();
+          }}
+        >
+          <input
+            className="ink-input w-full"
+            placeholder="username"
+            autoComplete="username"
+            value={username}
+            maxLength={14}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <input
+            className="ink-input w-full"
+            placeholder="password"
+            type="password"
+            autoComplete={mode === "register" ? "new-password" : "current-password"}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          {err && <p className="text-lg text-[var(--red)]">{err}</p>}
+          <button className="ink-btn big" type="submit" disabled={busy || !username || !password}>
+            {busy ? "…" : mode === "register" ? "create account" : "sign in"}
+          </button>
+        </form>
+
+        <div className="mt-5 flex flex-col gap-3">
+          <button
+            className="ink-btn"
+            onClick={() => {
+              setMode(mode === "register" ? "login" : "register");
+              setErr("");
+            }}
+          >
+            {mode === "register" ? "I already have one" : "make a new account"}
+          </button>
+          <button className="ink-btn" onClick={onBack}>
+            back
+          </button>
+        </div>
       </div>
     </div>
   );
