@@ -183,6 +183,7 @@ export default function App() {
   const [netTick, setNetTick] = useState(0);
   const [swapping, setSwapping] = useState(false);
   const [emoteOpen, setEmoteOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
   const [portrait, setPortrait] = useState(false);
   const [me, setMe] = useState<account.Account | null>(null);
   const [stats, setStats] = useState<account.Stats | null>(null);
@@ -588,7 +589,7 @@ export default function App() {
       {screen === "game" && (
         <>
           <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} touch={touch} preset={hudPreset} />
-          {!touch && gstate === "playing" && !locked && !emoteOpen && (
+          {!touch && gstate === "playing" && !locked && !emoteOpen && !chatOpen && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(246,243,230,0.35)]"
               onClick={() => gameRef.current?.input.requestLock()}
@@ -605,6 +606,9 @@ export default function App() {
           )}
           {gstate === "playing" && (
             <EmoteWheel gameRef={gameRef} touch={touch} open={emoteOpen} setOpen={setEmoteOpen} />
+          )}
+          {gstate === "playing" && mode === "arena" && (
+            <Chat gameRef={gameRef} tick={netTick} touch={touch} open={chatOpen} setOpen={setChatOpen} />
           )}
           {hud.canSwap && !swapping && (
             <button className="swap-btn" onClick={() => setSwapping(true)} aria-label="change loadout">
@@ -2230,6 +2234,122 @@ function EmoteWheel({
   );
 }
 
+/**
+ * Lobby chat. It rides the P2P mesh the match already keeps open, so it costs
+ * nothing to run and works in a private room with no backend at all. Enter opens
+ * it and releases the pointer; enter again sends and takes the lock back.
+ */
+function Chat({
+  gameRef,
+  tick,
+  touch,
+  open,
+  setOpen,
+}: {
+  gameRef: React.RefObject<Game | null>;
+  tick: number;
+  touch: boolean;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [teamOnly, setTeamOnly] = useState(false);
+  const box = useRef<HTMLInputElement>(null);
+  const m = gameRef.current?.match;
+  void tick;
+
+  // Read `open` through a ref: the listener is registered once, so a stale
+  // closure cannot re-open the box on the very keypress that just closed it.
+  const isOpen = useRef(open);
+  isOpen.current = open;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.code === "Enter" && !isOpen.current) {
+        e.preventDefault();
+        setOpen(true);
+      } else if (e.code === "Escape" && isOpen.current) {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [setOpen]);
+
+  useEffect(() => {
+    const g = gameRef.current;
+    if (!g) return;
+    g.input.textMode = open;
+    if (open) {
+      g.input.exitLock();
+      box.current?.focus();
+    } else if (!touch) g.input.requestLock();
+    return () => {
+      g.input.textMode = false;
+    };
+  }, [open, gameRef, touch]);
+
+  const lines = (m?.chat ?? []).slice(-7);
+  if (!m?.online) return null;
+
+  const send = () => {
+    const text = draft.trim();
+    if (text) m.say(text, teamOnly && m.mode === "tdm");
+    setDraft("");
+    setOpen(false);
+  };
+
+  return (
+    <>
+      {(lines.length > 0 || open) && (
+        <div className={`chat-log ${open ? "open" : ""}`}>
+          {lines.map((l) => (
+            <div key={l.id} className={l.team ? "team" : ""}>
+              <b style={{ color: m.mode === "tdm" ? (l.side % 2 ? "var(--red)" : "var(--ink)") : undefined }}>
+                {l.team ? "[team] " : ""}
+                {l.from}
+              </b>
+              <span>{l.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {open && (
+        <div className="chat-entry">
+          {m.mode === "tdm" && (
+            <button className={`gun-chip ${teamOnly ? "on" : ""}`} onClick={() => setTeamOnly(!teamOnly)}>
+              {teamOnly ? "team" : "all"}
+            </button>
+          )}
+          <input
+            ref={box}
+            className="ink-input flex-1"
+            value={draft}
+            maxLength={120}
+            placeholder="say something"
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.key === "Enter") send();
+                else setOpen(false);
+              }
+            }}
+          />
+          <button className="ink-btn" onClick={send}>
+            send
+          </button>
+        </div>
+      )}
+      {touch && !open && (
+        <button className="tbtn chat" aria-label="chat" onClick={() => setOpen(true)}>
+          <Icon name="chat" />
+        </button>
+      )}
+    </>
+  );
+}
+
 const STREAK_ICONS: Record<string, React.ReactNode> = {
   uav: (
     <>
@@ -2620,6 +2740,12 @@ const ICONS: Record<string, React.ReactNode> = {
       {/* a hook on a line */}
       <path d="M4 4l9 9" />
       <path d="M17 11a4 4 0 1 1-4 4V9" />
+    </>
+  ),
+  chat: (
+    <>
+      <path d="M4 6.5h16v10H10l-5 4v-4H4z" />
+      <path d="M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01" />
     </>
   ),
   emote: (

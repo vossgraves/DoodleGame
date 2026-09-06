@@ -1475,3 +1475,50 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   height: 100%;
   background: repeating-linear-gradient(-55deg, var(--ink) 0 2px, transparent 2px 5px);
 }
+
+/* ---- chat --------------------------------------------------------------- */
+.chat-log {
+  position: absolute;
+  left: calc(14px + env(safe-area-inset-left));
+  bottom: 30%;
+  max-width: min(420px, 42vw);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 16px;
+  color: var(--ink);
+  pointer-events: none;
+  opacity: 0.72;
+}
+.chat-log.open {
+  opacity: 1;
+}
+.chat-log > div {
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: rgba(246, 243, 230, 0.7);
+}
+.chat-log b {
+  margin-right: 6px;
+}
+.chat-log .team b {
+  color: var(--green);
+}
+
+.chat-entry {
+  position: absolute;
+  left: calc(14px + env(safe-area-inset-left));
+  right: calc(14px + env(safe-area-inset-right));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  z-index: 42;
+  display: flex;
+  gap: 8px;
+  max-width: 640px;
+}
+
+.tbtn.chat {
+  width: 44px;
+  height: 44px;
+  left: calc(12px + env(safe-area-inset-left));
+  top: calc(12px + env(safe-area-inset-top));
+}

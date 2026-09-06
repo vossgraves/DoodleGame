@@ -69,6 +69,15 @@ export interface RosterRow {
   bot?: boolean;
 }
 
+export interface ChatLine {
+  id: number;
+  from: string;
+  text: string;
+  /** sent to one side only */
+  team: boolean;
+  side: number;
+}
+
 export interface MatchHooks {
   scene: THREE.Scene;
   /** encode the local player right now */
@@ -553,6 +562,26 @@ export class MatchNet {
     return out;
   }
 
+  /** What everyone in the lobby has said, newest last, capped. */
+  chat: ChatLine[] = [];
+  private chatId = 0;
+
+  private pushChat(from: string, text: string, team: boolean, side: number) {
+    this.chatId += 1;
+    this.chat.push({ id: this.chatId, from, text, team, side });
+    if (this.chat.length > 60) this.chat.splice(0, this.chat.length - 60);
+    this.hooks.changed();
+  }
+
+  /** Say something to the lobby, or just to your own side. */
+  say(text: string, team = false) {
+    const clean = text.trim().slice(0, 120);
+    if (!clean || !this.net.active) return;
+    this.net.broadcast("chat", { text: clean, team });
+    const me = this.roster.get(this.net.id ?? "");
+    this.pushChat(me?.name ?? "you", clean, team, me?.team ?? 0);
+  }
+
   /** A kill also extends that player's run, which is what the MVP card shows. */
   private scoreKill(id: string | undefined) {
     const r = id ? this.roster.get(id) : undefined;
@@ -682,6 +711,15 @@ export class MatchNet {
       if (net.isHost || !Array.isArray(list)) return;
       const now = performance.now() / 1000;
       for (const e of list) this.remotes.get(e.i)?.push(e.s, now);
+    });
+
+    net.on<{ text: string; team: boolean }>("chat", (d, from) => {
+      if (!d || typeof d.text !== "string") return;
+      const who = this.roster.get(from);
+      if (!who) return;
+      // a team message is only for the people it was meant for
+      if (d.team && this.mode === "tdm" && who.team !== this.myTeam) return;
+      this.pushChat(who.name, d.text.slice(0, 120), !!d.team, who.team);
     });
 
     // a client hit one of the host's bots

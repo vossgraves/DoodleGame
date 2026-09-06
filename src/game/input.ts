@@ -177,6 +177,11 @@ export class Input {
   pointerLocked = false;
   wantLock = false;
   isTouch = false;
+  /**
+   * True while the player is typing. Without it, saying "sniper" in chat makes
+   * you crouch, sprint and reload halfway through the word.
+   */
+  textMode = false;
   touchMove = { x: 0, y: 0 };
   touchLookAcc = { x: 0, y: 0 };
   touchButtons: Record<string, boolean> = {};
@@ -192,7 +197,7 @@ export class Input {
     this.isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
 
     window.addEventListener("keydown", (e) => {
-      if (e.repeat) return;
+      if (e.repeat || this.textMode) return;
       const a = KEYMAP[e.code];
       if (a) {
         this.keys[a] = true;
