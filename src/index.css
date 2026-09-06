@@ -1280,3 +1280,115 @@ input[type="range"].ink-range::-webkit-slider-thumb {
 .grapple-meter.aimed .fm-fill {
   background: repeating-linear-gradient(-55deg, var(--green) 0 2px, transparent 2px 5px);
 }
+
+/* ---- emote wheel -------------------------------------------------------- */
+.emote-wheel {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: grid;
+  place-items: center;
+  background: rgba(246, 243, 230, 0.4);
+}
+.ew-hub {
+  position: relative;
+  width: min(460px, 82vw);
+  height: min(460px, 82vw);
+}
+.ew-centre {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-family: Caveat, cursive;
+  font-size: 34px;
+  color: var(--ink);
+  opacity: 0.7;
+}
+.ew-seg {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 148px;
+  padding: 7px 10px;
+  border: 2.5px solid var(--ink);
+  border-radius: 11px;
+  background: rgba(246, 243, 230, 0.94);
+  color: var(--ink);
+  font-family: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+.ew-seg:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+.ew-seg b {
+  display: block;
+  font-size: 16px;
+}
+.ew-seg em {
+  display: block;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.15;
+  opacity: 0.65;
+}
+
+.tbtn.emote {
+  width: 46px;
+  height: 46px;
+  right: calc(100px + env(safe-area-inset-right));
+  bottom: calc(214px + env(safe-area-inset-bottom));
+}
+
+.lobby-card {
+  flex: 1 1 0;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.lobby-card:hover:not(:disabled) {
+  transform: translateY(-3px);
+}
+.lobby-card:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.mode-card.picked {
+  border-color: var(--red);
+}
+
+.bind-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 5px;
+}
+.bind-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 9px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  background: rgba(246, 243, 230, 0.55);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 17px;
+  cursor: pointer;
+}
+.bind-row:hover {
+  background: rgba(26, 48, 192, 0.1);
+}
+.bind-row.arming {
+  border-color: var(--red);
+  color: var(--red);
+}
+.bind-row kbd {
+  min-width: 62px;
+  padding: 1px 7px;
+  border: 2px solid currentColor;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 15px;
+  text-align: center;
+}

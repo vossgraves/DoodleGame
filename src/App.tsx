@@ -12,6 +12,8 @@ import {
   type Gunsmith,
 } from "./game/attachments";
 import { SKILLS, SKILL_ORDER, sanitizeSkill, type SkillKind } from "./game/skills";
+import { EMOTES, EMOTE_ORDER, type EmoteKind } from "./game/emotes";
+import { BINDABLE, currentBindings, keyLabel, resetBindings, setBinding } from "./game/input";
 import {
   CAMOS,
   CHARMS,
@@ -30,7 +32,7 @@ import { WeaponIcon } from "./WeaponIcon";
 import { QUALITY, isQuality, type Quality } from "./game/renderer";
 import * as account from "./game/account";
 
-type Screen = "menu" | "howto" | "settings" | "loadout" | "account" | "game";
+type Screen = "menu" | "modes" | "howto" | "settings" | "loadout" | "game";
 
 const GUNS = WEAPONS.filter((w) => w.isGun);
 const MELEE = WEAPONS.filter((w) => !w.isGun);
@@ -177,6 +179,7 @@ export default function App() {
   // MatchNet lives outside React; bump this to re-read it
   const [netTick, setNetTick] = useState(0);
   const [swapping, setSwapping] = useState(false);
+  const [emoteOpen, setEmoteOpen] = useState(false);
   const [portrait, setPortrait] = useState(false);
   const [me, setMe] = useState<account.Account | null>(null);
   const [stats, setStats] = useState<account.Stats | null>(null);
@@ -194,6 +197,8 @@ export default function App() {
     const s = localStorage.getItem("doodle_quality");
     return isQuality(s) ? s : "high";
   });
+  const [fpsCap, setFpsCap] = useState(() => Number(localStorage.getItem("doodle_fps") || 0));
+  const [playerUid, setPlayerUid] = useState(() => account.uid());
   const [bestD, setBestD] = useState(Number(localStorage.getItem("doodle_best") || 0));
   const [bestZ, setBestZ] = useState(Number(localStorage.getItem("doodle_zbest") || 0));
   const [runId, setRunId] = useState(0);
@@ -316,6 +321,7 @@ export default function App() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const g = new Game(canvas, mode, mapKey, loadoutRef.current, gunsmithRef.current, wardrobeRef.current, skillRef.current);
+    g.setFpsCap(Number(localStorage.getItem("doodle_fps") || 0));
     g.onWeaponKill = (k) => {
       setWeaponKills((prev) => {
         const next = { ...prev, [k]: (prev[k] ?? 0) + 1 };
@@ -379,49 +385,30 @@ export default function App() {
         <Menu
           bestD={bestD}
           bestZ={bestZ}
+          onPlay={() => setScreen("modes")}
+          onHow={() => setScreen("howto")}
+          onSettings={() => setScreen("settings")}
+          onLoadout={() => setScreen("loadout")}
+          me={me}
+        />
+      )}
+      {screen === "modes" && (
+        <ModePicker
           mapKey={mapKey}
           onMap={(k) => {
             setMapKey(k);
             localStorage.setItem("doodle_map", k);
           }}
-          onDistrict={() => launch("district")}
-          onZombies={() => launch("zombies")}
-          onHow={() => setScreen("howto")}
-          onSettings={() => setScreen("settings")}
-          onLoadout={() => setScreen("loadout")}
-          onOnline={() => launch("arena")}
-          onAccount={() => setScreen("account")}
-          me={me}
-        />
-      )}
-      {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touch} />}
-      {screen === "account" && (
-        <AccountScreen
-          me={me}
-          stats={stats}
-          onSignedIn={(user, profile, s) => {
-            setMe(user);
-            setStats(s);
-            if (profile?.loadout?.length) setLoadout(sanitizeLoadout(profile.loadout));
-            const st = profile?.settings as { gunsmith?: unknown; skins?: unknown; wkills?: unknown } | undefined;
-            const kits = sanitizeGunsmith(st?.gunsmith);
-            if (Object.keys(kits).length) setGunsmith(kits);
-            const log = sanitizeKills(st?.wkills);
-            if (Object.keys(log).length) setWeaponKills(log);
-            const worn = enforceUnlocks(sanitizeWardrobe(st?.skins), log);
-            if (Object.keys(worn).length) setWardrobe(worn);
-            if (!localStorage.getItem("doodle_name")) {
-              setPlayerName(user.username);
-              localStorage.setItem("doodle_name", user.username);
-            }
-          }}
-          onSignedOut={() => {
-            setMe(null);
-            setStats(null);
-          }}
+          matchMode={matchMode}
+          onMatchMode={setMatchMode}
+          bestD={bestD}
+          bestZ={bestZ}
+          onSolo={(m) => launch(m)}
+          onMultiplayer={() => launch("arena")}
           onBack={() => setScreen("menu")}
         />
       )}
+      {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touch} />}
       {screen === "loadout" && (
         <LoadoutScreen
           loadout={loadout}
@@ -498,6 +485,40 @@ export default function App() {
             setQuality(q);
             localStorage.setItem("doodle_quality", q);
           }}
+          fps={fpsCap}
+          onFps={(v) => {
+            setFpsCap(v);
+            localStorage.setItem("doodle_fps", String(v));
+            gameRef.current?.setFpsCap(v);
+          }}
+          me={me}
+          stats={stats}
+          uid={playerUid}
+          onSignedIn={(user, profile, s) => {
+            setMe(user);
+            setStats(s);
+            account.adoptUid(user.id);
+            setPlayerUid(user.id);
+            if (profile?.loadout?.length) setLoadout(sanitizeLoadout(profile.loadout));
+            const st = profile?.settings as
+              | { gunsmith?: unknown; skins?: unknown; wkills?: unknown; skill?: unknown }
+              | undefined;
+            const kits = sanitizeGunsmith(st?.gunsmith);
+            if (Object.keys(kits).length) setGunsmith(kits);
+            const log = sanitizeKills(st?.wkills);
+            if (Object.keys(log).length) setWeaponKills(log);
+            const worn = enforceUnlocks(sanitizeWardrobe(st?.skins), log);
+            if (Object.keys(worn).length) setWardrobe(worn);
+            if (typeof st?.skill === "string") setSkill(sanitizeSkill(st.skill));
+            if (!localStorage.getItem("doodle_name")) {
+              setPlayerName(user.username);
+              localStorage.setItem("doodle_name", user.username);
+            }
+          }}
+          onSignedOut={() => {
+            setMe(null);
+            setStats(null);
+          }}
           onBack={() => setScreen("menu")}
         />
       )}
@@ -505,7 +526,7 @@ export default function App() {
       {screen === "game" && (
         <>
           <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} touch={touch} preset={hudPreset} />
-          {!touch && gstate === "playing" && !locked && (
+          {!touch && gstate === "playing" && !locked && !emoteOpen && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(246,243,230,0.35)]"
               onClick={() => gameRef.current?.input.requestLock()}
@@ -519,6 +540,9 @@ export default function App() {
               hud={hud}
               onUse={(k) => gameRef.current?.useStreak(k as Parameters<Game["useStreak"]>[0])}
             />
+          )}
+          {gstate === "playing" && (
+            <EmoteWheel gameRef={gameRef} touch={touch} open={emoteOpen} setOpen={setEmoteOpen} />
           )}
           {hud.canSwap && !swapping && (
             <button className="swap-btn" onClick={() => setSwapping(true)} aria-label="change loadout">
@@ -573,7 +597,6 @@ export default function App() {
                 if (gameRef.current) gameRef.current.match.name = (n || "doodle").slice(0, 14);
               }}
               matchMode={matchMode}
-              onMatchMode={setMatchMode}
               onMenu={toMenu}
             />
           )}
@@ -599,28 +622,18 @@ export default function App() {
 function Menu({
   bestD,
   bestZ,
-  mapKey,
-  onMap,
-  onDistrict,
-  onZombies,
+  onPlay,
   onHow,
   onSettings,
   onLoadout,
-  onOnline,
-  onAccount,
   me,
 }: {
   bestD: number;
   bestZ: number;
-  mapKey: string;
-  onMap: (k: string) => void;
-  onDistrict: () => void;
-  onZombies: () => void;
+  onPlay: () => void;
   onHow: () => void;
   onSettings: () => void;
   onLoadout: () => void;
-  onOnline: () => void;
-  onAccount: () => void;
   me: account.Account | null;
 }) {
   return (
@@ -638,7 +651,106 @@ function Menu({
         </h1>
         <p className="mt-2 text-xl opacity-80">erase them before they ink the page</p>
 
-        <div className="mt-7">
+        <button className="ink-btn big mt-8 px-16 text-4xl" onClick={onPlay}>
+          play
+        </button>
+
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          <button className="ink-btn" onClick={onLoadout}>
+            loadout
+          </button>
+          <button className="ink-btn" onClick={onHow}>
+            how to play
+          </button>
+          <button className="ink-btn" onClick={onSettings}>
+            settings
+          </button>
+        </div>
+        <p className="mt-5 text-base opacity-60">
+          {me ? `signed in as ${me.username}` : "playing as a guest · sign in from settings"}
+          {" · best "}
+          {bestD}/{bestZ}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Pick a mode, and for the multiplayer ones a map, before anything connects. */
+function ModePicker({
+  mapKey,
+  onMap,
+  matchMode,
+  onMatchMode,
+  bestD,
+  bestZ,
+  onSolo,
+  onMultiplayer,
+  onBack,
+}: {
+  mapKey: string;
+  onMap: (k: string) => void;
+  matchMode: MatchMode;
+  onMatchMode: (m: MatchMode) => void;
+  bestD: number;
+  bestZ: number;
+  onSolo: (m: Mode) => void;
+  onMultiplayer: (m: MatchMode) => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-10 overflow-y-auto p-4 paper-bg">
+      <div className="ink-panel mx-auto w-full max-w-[920px] px-6 py-8 text-center sm:px-10">
+        <h2 className="m-0 font-[Caveat,cursive] text-5xl">pick a mode</h2>
+
+        <div className="mt-6 text-lg uppercase tracking-widest opacity-60">on your own</div>
+        <div className="mt-2 flex flex-col items-stretch justify-center gap-4 sm:flex-row">
+          <button className="ink-panel mode-card p-5 text-left" onClick={() => onSolo("district")}>
+            <div className="text-sm opacity-70">WAVE SURVIVAL</div>
+            <div className="font-[Caveat,cursive] text-4xl">DISTRICT</div>
+            <p className="mt-2 text-lg leading-snug opacity-80">
+              doodle goons, rooftops, rifles and a blade. clear waves. don&apos;t get sketched out.
+            </p>
+            <div className="mt-3 text-lg">
+              best <b className="text-[var(--red)]">{bestD}</b>
+            </div>
+          </button>
+          <button className="ink-panel mode-card p-5 text-left" onClick={() => onSolo("zombies")}>
+            <div className="text-sm text-[var(--red)]">ENDLESS HORDES</div>
+            <div className="font-[Caveat,cursive] text-4xl text-[var(--red)]">ZOMBIES</div>
+            <p className="mt-2 text-lg leading-snug opacity-80">
+              the margin bleeds. shamblers, runners, tanks. they never stop. keep moving.
+            </p>
+            <div className="mt-3 text-lg">
+              best <b className="text-[var(--red)]">{bestZ}</b>
+            </div>
+          </button>
+        </div>
+
+        <div className="mt-8 text-lg uppercase tracking-widest opacity-60">against people</div>
+        <div className="mt-2 flex flex-wrap items-stretch justify-center gap-3">
+          {(
+            [
+              ["ffa", "FREE-FOR-ALL", "everyone against everyone, first to the target score"],
+              ["tdm", "TEAM DEATHMATCH", "five a side, shared score, watch your corners"],
+              ["br", "BATTLE ROYALE", "no respawns, a closing circle, loot on the floor"],
+            ] as [MatchMode, string, string][]
+          ).map(([k, name, blurb]) => (
+            <button
+              key={k}
+              className={`ink-panel mode-card p-5 text-left ${matchMode === k ? "picked" : ""}`}
+              onClick={() => {
+                onMatchMode(k);
+                onMultiplayer(k);
+              }}
+            >
+              <div className="font-[Caveat,cursive] text-3xl">{name}</div>
+              <p className="mt-2 text-lg leading-snug opacity-80">{blurb}</p>
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-8">
           <div className="mb-2 text-lg uppercase tracking-widest opacity-60">pick a page</div>
           <div className="flex flex-wrap items-stretch justify-center gap-2">
             {MAPS.map((m) => (
@@ -650,48 +762,9 @@ function Menu({
           </div>
         </div>
 
-        <div className="mt-7 flex flex-col items-stretch justify-center gap-4 sm:flex-row sm:items-stretch">
-          <button className="ink-panel mode-card p-5 text-left" onClick={onDistrict}>
-            <div className="text-sm opacity-70">WAVE SURVIVAL</div>
-            <div className="font-[Caveat,cursive] text-4xl">DISTRICT</div>
-            <p className="mt-2 text-lg leading-snug opacity-80">
-              doodle goons, rooftops, rifles and a switchblade. clear waves. don&apos;t get sketched out.
-            </p>
-            <div className="mt-3 text-lg">
-              best <b className="text-[var(--red)]">{bestD}</b>
-            </div>
-          </button>
-          <button className="ink-panel mode-card p-5 text-left" onClick={onZombies} style={{ transform: "rotate(0.8deg)" }}>
-            <div className="text-sm text-[var(--red)]">ENDLESS HORDES</div>
-            <div className="font-[Caveat,cursive] text-4xl text-[var(--red)]">ZOMBIES</div>
-            <p className="mt-2 text-lg leading-snug opacity-80">
-              the margin bleeds. shamblers, runners, tanks. they never stop coming. keep moving.
-            </p>
-            <div className="mt-3 text-lg">
-              best <b className="text-[var(--red)]">{bestZ}</b>
-            </div>
-          </button>
-        </div>
-
-        <button className="ink-btn big mt-6" onClick={onOnline}>
-          play online
+        <button className="ink-btn mt-7" onClick={onBack}>
+          back
         </button>
-
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-          <button className="ink-btn" onClick={onLoadout}>
-            loadout
-          </button>
-          <button className="ink-btn" onClick={onHow}>
-            how to play
-          </button>
-          <button className="ink-btn" onClick={onSettings}>
-            settings
-          </button>
-          <button className="ink-btn" onClick={onAccount}>
-            {me ? me.username : "sign in"}
-          </button>
-        </div>
-        <p className="mt-5 text-base opacity-60">click a card to scribble yourself in</p>
       </div>
     </div>
   );
@@ -820,6 +893,13 @@ function Settings({
   onAdsToggle,
   quality,
   onQuality,
+  fps,
+  onFps,
+  me,
+  stats,
+  uid,
+  onSignedIn,
+  onSignedOut,
   onBack,
 }: {
   sens: number;
@@ -838,76 +918,192 @@ function Settings({
   onAdsToggle: (v: boolean) => void;
   quality: Quality;
   onQuality: (q: Quality) => void;
+  fps: number;
+  onFps: (v: number) => void;
+  me: account.Account | null;
+  stats: account.Stats | null;
+  uid: string;
+  onSignedIn: (u: account.Account, p: account.Profile | null, s: account.Stats | null) => void;
+  onSignedOut: () => void;
   onBack: () => void;
 }) {
+  const [tab, setTab] = useState<"controls" | "video" | "audio" | "account">("controls");
+
   return (
     <div className="absolute inset-0 z-10 overflow-y-auto p-4 paper-bg">
-      <div className="ink-panel mx-auto w-full max-w-[520px] px-8 py-7 text-center">
-        <h2 className="m-0 font-[Caveat,cursive] text-5xl">settings</h2>
-        <div className="mt-6 flex flex-col items-center gap-5 text-2xl">
-          <div className="flex flex-col items-center gap-2">
-            <span>hud layout</span>
-            <div className="flex flex-wrap justify-center gap-2">
-              {[
-                ["codm", "modern"],
-                ["classic", "classic"],
-              ].map(([k, label]) => (
-                <button key={k} className={`gun-chip ${hudPreset === k ? "on" : ""}`} onClick={() => onHudPreset(k)}>
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="flex flex-col items-center gap-2">
-            <span>graphics</span>
-            <div className="flex flex-wrap justify-center gap-2">
-              {(Object.keys(QUALITY) as Quality[]).map((q) => (
-                <button key={q} className={`gun-chip ${quality === q ? "on" : ""}`} onClick={() => onQuality(q)}>
-                  {q}
-                </button>
-              ))}
-            </div>
-            <span className="text-base opacity-60">higher draws at more of your screen's real pixels</span>
-          </div>
-          <InkPicker label="hit colour" value={hitInk} onChange={onHitInk} />
-          <InkPicker label="fire projection" value={tracerInk} onChange={onTracerInk} />
-          <label className="flex flex-col items-center gap-2">
-            look sensitivity {sens}%
-            <input className="ink-range" type="range" min={40} max={200} value={sens} onChange={(e) => onSens(Number(e.target.value))} />
-          </label>
-          <label className="flex items-center gap-3">
-            <input type="checkbox" checked={adsToggle} onChange={(e) => onAdsToggle(e.target.checked)} />
-            aim is a toggle, not a hold
-          </label>
-          <label className="flex items-center gap-3">
-            <input type="checkbox" checked={invert} onChange={(e) => onInvert(e.target.checked)} />
-            invert look y
-          </label>
-          <label className="flex items-center gap-3">
-            <input type="checkbox" checked={music} onChange={(e) => onMusic(e.target.checked)} />
-            doodle tune
-          </label>
+      <div className="ink-panel mx-auto w-full max-w-[720px] px-8 py-7">
+        <h2 className="m-0 text-center font-[Caveat,cursive] text-5xl">settings</h2>
+
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {(
+            [
+              ["controls", "controls"],
+              ["video", "video"],
+              ["audio", "audio"],
+              ["account", me ? me.username : "account"],
+            ] as const
+          ).map(([id, label]) => (
+            <button key={id} className={`gun-chip ${tab === id ? "on" : ""}`} onClick={() => setTab(id)}>
+              {label}
+            </button>
+          ))}
         </div>
-        <button className="ink-btn mt-8" onClick={onBack}>
-          back
-        </button>
+
+        {tab === "controls" && (
+          <div className="mt-6 flex flex-col gap-5 text-xl">
+            <label className="flex flex-col gap-2">
+              look sensitivity {sens}%
+              <input
+                className="ink-range"
+                type="range"
+                min={40}
+                max={200}
+                value={sens}
+                onChange={(e) => onSens(Number(e.target.value))}
+              />
+            </label>
+            <label className="flex items-center gap-3">
+              <input type="checkbox" checked={adsToggle} onChange={(e) => onAdsToggle(e.target.checked)} />
+              aim is a toggle, not a hold
+            </label>
+            <label className="flex items-center gap-3">
+              <input type="checkbox" checked={invert} onChange={(e) => onInvert(e.target.checked)} />
+              invert look y
+            </label>
+            <Rebinder />
+          </div>
+        )}
+
+        {tab === "video" && (
+          <div className="mt-6 flex flex-col gap-5 text-xl">
+            <div className="flex flex-col gap-2">
+              <span>graphics</span>
+              <div className="flex flex-wrap gap-2">
+                {(Object.keys(QUALITY) as Quality[]).map((q) => (
+                  <button key={q} className={`gun-chip ${quality === q ? "on" : ""}`} onClick={() => onQuality(q)}>
+                    {q}
+                  </button>
+                ))}
+              </div>
+              <span className="text-base opacity-60">higher draws at more of your screen&apos;s real pixels</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              <span>frame rate</span>
+              <div className="flex flex-wrap gap-2">
+                {[30, 60, 90, 120, 0].map((v) => (
+                  <button key={v} className={`gun-chip ${fps === v ? "on" : ""}`} onClick={() => onFps(v)}>
+                    {v === 0 ? "uncapped" : `${v} fps`}
+                  </button>
+                ))}
+              </div>
+              <span className="text-base opacity-60">a cap your phone can hold beats a number it cannot</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              <span>hud layout</span>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ["codm", "modern"],
+                  ["classic", "classic"],
+                ].map(([k, label]) => (
+                  <button key={k} className={`gun-chip ${hudPreset === k ? "on" : ""}`} onClick={() => onHudPreset(k)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <InkPicker label="hit colour" value={hitInk} onChange={onHitInk} />
+            <InkPicker label="fire projection" value={tracerInk} onChange={onTracerInk} />
+          </div>
+        )}
+
+        {tab === "audio" && (
+          <div className="mt-6 flex flex-col gap-5 text-xl">
+            <label className="flex items-center gap-3">
+              <input type="checkbox" checked={music} onChange={(e) => onMusic(e.target.checked)} />
+              doodle tune
+            </label>
+          </div>
+        )}
+
+        {tab === "account" && (
+          <AccountPanel me={me} stats={stats} uid={uid} onSignedIn={onSignedIn} onSignedOut={onSignedOut} />
+        )}
+
+        <div className="mt-8 text-center">
+          <button className="ink-btn" onClick={onBack}>
+            back
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-function AccountScreen({
+/**
+ * Key rebinding. Clicking a row arms it; the next key press takes the slot and
+ * is stripped from wherever else it was bound, because two actions on one key
+ * is never what anyone meant.
+ */
+function Rebinder() {
+  const [arming, setArming] = useState<string | null>(null);
+  const [, bump] = useState(0);
+
+  useEffect(() => {
+    if (!arming) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      if (e.code !== "Escape") setBinding(arming, e.code);
+      setArming(null);
+      bump((n) => n + 1);
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [arming]);
+
+  const binds = currentBindings();
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <span>keys</span>
+        <button
+          className="ink-btn ml-auto text-base"
+          onClick={() => {
+            resetBindings();
+            bump((n) => n + 1);
+          }}
+        >
+          reset
+        </button>
+      </div>
+      <div className="bind-grid">
+        {BINDABLE.map((b) => (
+          <button
+            key={b.id}
+            className={`bind-row ${arming === b.id ? "arming" : ""}`}
+            onClick={() => setArming(b.id)}
+          >
+            <span>{b.name}</span>
+            <kbd>{arming === b.id ? "press a key" : keyLabel(binds[b.id]?.[0] ?? "")}</kbd>
+          </button>
+        ))}
+      </div>
+      <span className="text-base opacity-60">esc cancels · mouse buttons stay fire and aim</span>
+    </div>
+  );
+}
+
+function AccountPanel({
   me,
   stats,
+  uid,
   onSignedIn,
   onSignedOut,
-  onBack,
 }: {
   me: account.Account | null;
   stats: account.Stats | null;
+  uid: string;
   onSignedIn: (u: account.Account, p: account.Profile | null, s: account.Stats | null) => void;
   onSignedOut: () => void;
-  onBack: () => void;
 }) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
@@ -923,107 +1119,100 @@ function AccountScreen({
       const full = await account.me();
       onSignedIn(user, full?.profile ?? null, full?.stats ?? null);
       setPassword("");
-      onBack();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     }
     setBusy(false);
   };
 
+  const uidRow = (
+    <div className="mt-4 flex items-center justify-between gap-3 border-2 border-dashed border-[var(--ink)] px-3 py-2">
+      <span className="text-base opacity-70">player id</span>
+      <code className="tracking-[0.14em]">{uid}</code>
+    </div>
+  );
+
   if (me) {
     return (
-      <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
-        <div className="ink-panel w-full max-w-[520px] px-8 py-7 text-center">
-          <h2 className="m-0 font-[Caveat,cursive] text-5xl">{me.username}</h2>
+      <div className="mt-6 text-xl">
+        <div className="text-center">
+          <div className="font-[Caveat,cursive] text-4xl">{me.username}</div>
           <p className="mt-1 text-lg opacity-70">your loadout and scores follow you to any device</p>
-          {stats && (
-            <div className="mt-5 text-left text-xl">
-              {(
-                [
-                  ["kills", stats.kills],
-                  ["deaths", stats.deaths],
-                  ["wins", stats.wins],
-                  ["matches", stats.matches],
-                  ["best · district", stats.best_district],
-                  ["best · zombies", stats.best_zombies],
-                ] as [string, number][]
-              ).map(([k, v]) => (
-                <div key={k} className="flex justify-between border-b border-[var(--ink)] py-1">
-                  <span className="opacity-75">{k}</span>
-                  <b>{v}</b>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="mt-6 flex flex-col gap-3">
-            <button
-              className="ink-btn"
-              onClick={async () => {
-                await account.logout();
-                onSignedOut();
-              }}
-            >
-              sign out
-            </button>
-            <button className="ink-btn" onClick={onBack}>
-              back
-            </button>
-          </div>
         </div>
+        {uidRow}
+        {stats && (
+          <div className="mt-4">
+            {(
+              [
+                ["kills", stats.kills],
+                ["deaths", stats.deaths],
+                ["wins", stats.wins],
+                ["matches", stats.matches],
+                ["best · district", stats.best_district],
+                ["best · zombies", stats.best_zombies],
+              ] as [string, number][]
+            ).map(([k, v]) => (
+              <div key={k} className="flex justify-between border-b border-[var(--ink)] py-1">
+                <span className="opacity-75">{k}</span>
+                <b>{v}</b>
+              </div>
+            ))}
+          </div>
+        )}
+        <button
+          className="ink-btn mt-5 w-full"
+          onClick={async () => {
+            await account.logout();
+            onSignedOut();
+          }}
+        >
+          sign out
+        </button>
       </div>
     );
   }
 
   return (
-    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
-      <div className="ink-panel w-full max-w-[480px] px-8 py-7 text-center">
-        <h2 className="m-0 font-[Caveat,cursive] text-5xl">{mode === "register" ? "new doodler" : "sign in"}</h2>
-        <p className="mt-1 text-lg opacity-70">optional — the game plays fine without an account</p>
-
-        <form
-          className="mt-5 flex flex-col items-center gap-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!busy) void submit();
-          }}
-        >
-          <input
-            className="ink-input w-full"
-            placeholder="username"
-            autoComplete="username"
-            value={username}
-            maxLength={14}
-            onChange={(e) => setUsername(e.target.value)}
-          />
-          <input
-            className="ink-input w-full"
-            placeholder="password"
-            type="password"
-            autoComplete={mode === "register" ? "new-password" : "current-password"}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          {err && <p className="text-lg text-[var(--red)]">{err}</p>}
-          <button className="ink-btn big" type="submit" disabled={busy || !username || !password}>
-            {busy ? "…" : mode === "register" ? "create account" : "sign in"}
-          </button>
-        </form>
-
-        <div className="mt-5 flex flex-col gap-3">
-          <button
-            className="ink-btn"
-            onClick={() => {
-              setMode(mode === "register" ? "login" : "register");
-              setErr("");
-            }}
-          >
-            {mode === "register" ? "I already have one" : "make a new account"}
-          </button>
-          <button className="ink-btn" onClick={onBack}>
-            back
-          </button>
-        </div>
-      </div>
+    <div className="mt-6 text-xl">
+      <p className="text-center text-lg opacity-70">optional — the game plays fine without an account</p>
+      {uidRow}
+      <form
+        className="mt-4 flex flex-col gap-3"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!busy) void submit();
+        }}
+      >
+        <input
+          className="ink-input w-full"
+          placeholder="username"
+          autoComplete="username"
+          value={username}
+          maxLength={14}
+          onChange={(e) => setUsername(e.target.value)}
+        />
+        <input
+          className="ink-input w-full"
+          placeholder="password"
+          type="password"
+          autoComplete={mode === "register" ? "new-password" : "current-password"}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        {err && <p className="text-lg text-[var(--red)]">{err}</p>}
+        <button className="ink-btn big" type="submit" disabled={busy || !username || !password}>
+          {busy ? "…" : mode === "register" ? "create account" : "sign in"}
+        </button>
+      </form>
+      <button
+        className="ink-btn mt-3 w-full"
+        onClick={() => {
+          setMode(mode === "register" ? "login" : "register");
+          setErr("");
+        }}
+      >
+        {mode === "register" ? "I already have one" : "make a new account"}
+      </button>
     </div>
   );
 }
@@ -1034,7 +1223,6 @@ function Online({
   name,
   onName,
   matchMode,
-  onMatchMode,
   onMenu,
 }: {
   gameRef: React.RefObject<Game | null>;
@@ -1042,7 +1230,6 @@ function Online({
   name: string;
   onName: (n: string) => void;
   matchMode: MatchMode;
-  onMatchMode: (m: MatchMode) => void;
   onMenu: () => void;
 }) {
   const [busy, setBusy] = useState("");
@@ -1218,7 +1405,9 @@ function Online({
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.72)] p-4">
       <div className="ink-panel w-full max-w-[560px] px-8 py-7 text-center">
-        <h2 className="m-0 font-[Caveat,cursive] text-5xl">play online</h2>
+        <h2 className="m-0 font-[Caveat,cursive] text-5xl">
+          {matchMode === "ffa" ? "free-for-all" : matchMode === "tdm" ? "team deathmatch" : "battle royale"}
+        </h2>
         <p className="mt-1 text-lg opacity-70">no server — you connect straight to the other players</p>
 
         <label className="mt-5 flex flex-col items-center gap-2 text-xl">
@@ -1232,27 +1421,12 @@ function Online({
           />
         </label>
 
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-          {(["ffa", "tdm", "br"] as MatchMode[]).map((k) => (
-            <button
-              key={k}
-              className={`gun-chip ${matchMode === k ? "on" : ""}`}
-              onClick={() => {
-                onMatchMode(k);
-                m.mode = k;
-              }}
-            >
-              {k === "ffa" ? "FREE-FOR-ALL" : k === "tdm" ? "TEAM DEATHMATCH" : "BATTLE ROYALE"}
-            </button>
-          ))}
-        </div>
-
         {err && <p className="mt-4 text-lg text-[var(--red)]">{err}</p>}
         {busy && <p className="mt-4 text-lg opacity-70">{busy}…</p>}
 
-        <div className="mt-5 flex flex-col gap-3">
+        <div className="mt-6 flex flex-col items-stretch gap-3 sm:flex-row">
           <button
-            className="ink-btn big"
+            className="ink-panel lobby-card p-4 text-left"
             disabled={!!busy}
             onClick={async () => {
               setBusy("looking for a lobby");
@@ -1266,8 +1440,37 @@ function Online({
               setBusy("");
             }}
           >
-            quick play
+            <div className="font-[Caveat,cursive] text-3xl">public</div>
+            <p className="mt-1 text-base leading-snug opacity-75">
+              matched with anyone looking. bots fill the empty seats and stand down when someone joins.
+            </p>
           </button>
+          <button
+            className="ink-panel lobby-card p-4 text-left"
+            disabled={!!busy}
+            onClick={() => run("opening a lobby", () => m.host(false, m.mapKey, matchMode))}
+          >
+            <div className="font-[Caveat,cursive] text-3xl">private</div>
+            <p className="mt-1 text-base leading-snug opacity-75">
+              your own room with a code to share. nobody joins unless you give it to them.
+            </p>
+          </button>
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          <input
+            className="ink-input flex-1 tracking-[0.2em] uppercase"
+            value={code}
+            maxLength={5}
+            placeholder="JOIN WITH A CODE"
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+          />
+          <button className="ink-btn" disabled={!!busy || code.length < 5} onClick={() => run("joining", () => m.join(code))}>
+            join
+          </button>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-2">
           <button
             className="ink-btn"
             disabled={!!busy}
@@ -1280,26 +1483,6 @@ function Online({
           >
             practice vs bots
           </button>
-          <div className="flex gap-2">
-            <button className="ink-btn flex-1" disabled={!!busy} onClick={() => run("opening a lobby", () => m.host(true, m.mapKey, matchMode))}>
-              host public
-            </button>
-            <button className="ink-btn flex-1" disabled={!!busy} onClick={() => run("opening a lobby", () => m.host(false, m.mapKey, matchMode))}>
-              host private
-            </button>
-          </div>
-          <div className="flex gap-2">
-            <input
-              className="ink-input flex-1 tracking-[0.2em] uppercase"
-              value={code}
-              maxLength={5}
-              placeholder="CODE"
-              onChange={(e) => setCode(e.target.value.toUpperCase())}
-            />
-            <button className="ink-btn" disabled={!!busy || code.length < 5} onClick={() => run("joining", () => m.join(code))}>
-              join
-            </button>
-          </div>
           <button className="ink-btn" onClick={onMenu}>
             back
           </button>
@@ -1805,6 +1988,82 @@ function Minimap({ hud }: { hud: HudSnap }) {
   );
 }
 
+/**
+ * The emote wheel. Opening it releases the pointer lock, because picking a
+ * segment with a locked cursor is impossible; closing it takes the lock back.
+ */
+function EmoteWheel({
+  gameRef,
+  touch,
+  open,
+  setOpen,
+}: {
+  gameRef: React.RefObject<Game | null>;
+  touch: boolean;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const g = gameRef.current;
+      if (!g) return;
+      if (e.code === "Escape" && open) {
+        setOpen(false);
+        return;
+      }
+      if (currentBindings().emote?.includes(e.code)) {
+        e.preventDefault();
+        setOpen(!open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [gameRef, open, setOpen]);
+
+  useEffect(() => {
+    const g = gameRef.current;
+    if (!g) return;
+    if (open) g.input.exitLock();
+    else if (!touch) g.input.requestLock();
+  }, [open, gameRef, touch]);
+
+  const pick: (k: EmoteKind) => void = (k) => {
+    gameRef.current?.player.playEmote(k);
+    setOpen(false);
+  };
+
+  if (!open) {
+    return touch ? (
+      <button className="tbtn emote" aria-label="emotes" onClick={() => setOpen(true)}>
+        <Icon name="emote" />
+      </button>
+    ) : null;
+  }
+
+  const n = EMOTE_ORDER.length;
+  return (
+    <div className="emote-wheel" onClick={() => setOpen(false)}>
+      <div className="ew-hub" onClick={(e) => e.stopPropagation()}>
+        {EMOTE_ORDER.map((k, i) => {
+          const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+          return (
+            <button
+              key={k}
+              className="ew-seg"
+              style={{ left: `${50 + Math.cos(a) * 36}%`, top: `${50 + Math.sin(a) * 36}%` }}
+              onClick={() => pick(k)}
+            >
+              <b>{EMOTES[k].name}</b>
+              <em>{EMOTES[k].blurb}</em>
+            </button>
+          );
+        })}
+        <div className="ew-centre">emotes</div>
+      </div>
+    </div>
+  );
+}
+
 const STREAK_ICONS: Record<string, React.ReactNode> = {
   uav: (
     <>
@@ -2184,6 +2443,13 @@ const ICONS: Record<string, React.ReactNode> = {
       {/* a hook on a line */}
       <path d="M4 4l9 9" />
       <path d="M17 11a4 4 0 1 1-4 4V9" />
+    </>
+  ),
+  emote: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M8.5 10.5h.01M15.5 10.5h.01" />
+      <path d="M8.5 15a5 5 0 0 0 7 0" />
     </>
   ),
   pause: (

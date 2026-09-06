@@ -25,7 +25,41 @@ export interface Profile {
 }
 
 const TOKEN_KEY = "doodle_token";
+const UID_KEY = "doodle_uid";
 const API = "/api";
+
+/**
+ * A stable id for this player, minted on first run. Signing in adopts the
+ * account's id so the same person is the same id on every device; signing out
+ * keeps it, because the id is who you are in a lobby, not who you are to the
+ * database. It is also the fallback identity when there is no backend at all.
+ */
+export function uid(): string {
+  try {
+    const seen = localStorage.getItem(UID_KEY);
+    if (seen) return seen;
+  } catch {
+    return "DDL-GUEST";
+  }
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  const body = Array.from(bytes, (b) => b.toString(36).toUpperCase().padStart(2, "0")).join("").slice(0, 10);
+  const fresh = `DDL-${body.slice(0, 5)}-${body.slice(5, 10)}`;
+  try {
+    localStorage.setItem(UID_KEY, fresh);
+  } catch {
+    // private mode: the id lasts the session, which is still better than none
+  }
+  return fresh;
+}
+
+export function adoptUid(id: string) {
+  try {
+    localStorage.setItem(UID_KEY, id);
+  } catch {
+    // nothing to do; uid() will mint a fresh one next time
+  }
+}
 
 export function savedToken(): string | null {
   try {

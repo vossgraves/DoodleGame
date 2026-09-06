@@ -7,6 +7,7 @@ import type { AudioSys } from "./audio";
 import { applyBuild, type GunBuild, type Gunsmith } from "./attachments";
 import { camoById, charmById, stickerById, type Wardrobe, type WeaponSkin } from "./cosmetics";
 import { Grapple, type GrappleTarget } from "./grapple";
+import { EMOTES, armPose, inspectPose, type EmoteKind } from "./emotes";
 
 export type WeaponKind =
   | "rifle"
@@ -1078,6 +1079,11 @@ export class Player {
   /** which skill model to hold instead, if any */
   private skillModels = new Map<string, THREE.Group>();
   private skillShown = "";
+  /** the emote or inspect currently playing, and how far through it is */
+  emote: EmoteKind | null = null;
+  emoteT = 0;
+  private emoteRig: THREE.Group | null = null;
+  private emoteArms: { l: THREE.Object3D; r: THREE.Object3D } | null = null;
   dashCd = 0;
   airJumps = 1;
   sprinting = false;
@@ -1116,6 +1122,7 @@ export class Player {
     for (const w of this.weapons) this.rig.add(w.root);
     hooks.scene.add(hooks.camera);
     this.buildSkillModels();
+    this.buildEmoteRig();
     this.grapple = new Grapple({
       world: hooks.world,
       scene: hooks.scene,
@@ -1333,6 +1340,68 @@ export class Player {
     bow.visible = false;
     this.rig.add(bow);
     this.skillModels.set("sparrow", bow);
+  }
+
+  /**
+   * The bare hands an emote uses. Two shoulders with an arm hanging off each,
+   * so the same shoulder angles that pose a stick figure pose these.
+   */
+  private buildEmoteRig() {
+    const g = new THREE.Group();
+    g.visible = false;
+    const mat = makeInkMaterial({ ink: INK.BLUE, shadeBias: -0.2 });
+    const arm = (side: number) => {
+      const shoulder = new THREE.Group();
+      shoulder.position.set(side * 0.26, -0.34, -0.1);
+      const limb = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.062, 0.62, 6), mat);
+      limb.position.y = -0.31;
+      shoulder.add(limb);
+      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.085, 7, 5), mat);
+      hand.position.y = -0.64;
+      shoulder.add(hand);
+      g.add(shoulder);
+      return shoulder;
+    };
+    const l = arm(-1);
+    const r = arm(1);
+    this.rig.add(g);
+    this.emoteRig = g;
+    this.emoteArms = { l, r };
+  }
+
+  /** Start an emote, if nothing more important is going on. */
+  playEmote(kind: EmoteKind) {
+    if (!this.alive || this.aiming || this.sprinting || this.grapple.attached) return false;
+    this.emote = kind;
+    this.emoteT = 0;
+    return true;
+  }
+
+  cancelEmote() {
+    this.emote = null;
+    this.emoteT = 0;
+  }
+
+  private updateEmote(dt: number) {
+    if (!this.emote) {
+      if (this.emoteRig) this.emoteRig.visible = false;
+      return;
+    }
+    const def = EMOTES[this.emote];
+    this.emoteT += dt;
+    if (this.emoteT >= def.dur) {
+      this.cancelEmote();
+      return;
+    }
+    if (def.holdsWeapon || !this.emoteRig || !this.emoteArms) {
+      if (this.emoteRig) this.emoteRig.visible = false;
+      return;
+    }
+    const t = this.emoteT / def.dur;
+    const pose = armPose(this.emote, t);
+    this.emoteRig.visible = true;
+    this.emoteArms.l.rotation.copy(pose.left);
+    this.emoteArms.r.rotation.copy(pose.right);
   }
 
   /** Show the model a skill puts in your hands, or none. */
@@ -1704,6 +1773,16 @@ export class Player {
       this.throwNade();
     }
 
+    // anything that matters cuts an emote short
+    if (this.emote && (firePress || this.aiming || this.sprinting || this.weapon.reloading || this.nadeHeld)) {
+      this.cancelEmote();
+    }
+    if (i.pressed("inspect")) {
+      if (this.emote) this.cancelEmote();
+      else this.playEmote("inspect");
+    }
+    this.updateEmote(dt);
+
     this.syncCamera(dt);
     this.animateGun(dt);
   }
@@ -1811,7 +1890,27 @@ export class Player {
       w.root.rotation.y += e * 0.35;
       w.root.rotation.z += e * 0.6;
     }
-    if (this.weaponHidden) w.root.visible = false;
+
+    let emoteHides = false;
+    if (this.emote) {
+      const def = EMOTES[this.emote];
+      const t = this.emoteT / def.dur;
+      if (def.holdsWeapon) {
+        inspectPose(t, INSPECT);
+        p.add(INSPECT.pos);
+        w.root.rotation.x += INSPECT.rot.x;
+        w.root.rotation.y += INSPECT.rot.y;
+        w.root.rotation.z += INSPECT.rot.z;
+      } else {
+        // a gesture needs both hands, so the gun goes away for the duration
+        const drop = Math.sin(Math.min(1, t * 6) * Math.PI * 0.5) * (t > 0.85 ? (1 - t) / 0.15 : 1);
+        p.y -= drop * 0.9;
+        w.root.rotation.x += drop * 1.3;
+        emoteHides = drop > 0.8;
+      }
+    }
+
+    if (this.weaponHidden || emoteHides) w.root.visible = false;
     else if (w.def.kind === "sniper" && ads > 0.8) w.root.visible = false;
     else w.root.visible = this.alive;
     void dt;
@@ -1821,3 +1920,5 @@ export class Player {
 function lerpFov(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
+
+const INSPECT = { pos: new THREE.Vector3(), rot: new THREE.Euler() };

@@ -1,36 +1,136 @@
 import { clamp } from "./math";
 
-const KEYMAP: Record<string, string> = {
-  KeyW: "forward",
-  KeyS: "back",
-  KeyA: "left",
-  KeyD: "right",
-  ArrowUp: "forward",
-  ArrowDown: "back",
-  ArrowLeft: "left",
-  ArrowRight: "right",
-  Space: "jump",
-  ShiftLeft: "sprint",
-  ShiftRight: "sprint",
-  ControlLeft: "crouch",
-  KeyC: "crouch",
-  KeyR: "reload",
-  KeyF: "melee",
-  KeyV: "melee",
-  Digit1: "slot1",
-  Digit2: "slot2",
-  Digit3: "slot3",
-  Digit4: "slot4",
-  Escape: "pause",
-  KeyP: "pause",
-  KeyG: "grenade",
-  KeyX: "dash",
-  AltLeft: "dash",
-  KeyM: "music",
-  KeyQ: "grapple",
-  KeyE: "nextWeapon",
-  Tab: "score",
+/** The default keys, and the order the settings screen lists them in. */
+export const DEFAULT_KEYS: Record<string, string[]> = {
+  forward: ["KeyW", "ArrowUp"],
+  back: ["KeyS", "ArrowDown"],
+  left: ["KeyA", "ArrowLeft"],
+  right: ["KeyD", "ArrowRight"],
+  jump: ["Space"],
+  sprint: ["ShiftLeft", "ShiftRight"],
+  crouch: ["ControlLeft", "KeyC"],
+  dash: ["KeyX", "AltLeft"],
+  grapple: ["KeyQ"],
+  reload: ["KeyR"],
+  melee: ["KeyF", "KeyV"],
+  grenade: ["KeyG"],
+  inspect: ["KeyI"],
+  emote: ["KeyB"],
+  slot1: ["Digit1"],
+  slot2: ["Digit2"],
+  slot3: ["Digit3"],
+  slot4: ["Digit4"],
+  nextWeapon: ["KeyE"],
+  score: ["Tab"],
+  pause: ["Escape", "KeyP"],
+  music: ["KeyM"],
 };
+
+/** Only these are worth offering to rebind; the rest are fixed or aliases. */
+export const BINDABLE: { id: string; name: string }[] = [
+  { id: "forward", name: "forward" },
+  { id: "back", name: "back" },
+  { id: "left", name: "strafe left" },
+  { id: "right", name: "strafe right" },
+  { id: "jump", name: "jump" },
+  { id: "sprint", name: "sprint" },
+  { id: "crouch", name: "crouch / slide" },
+  { id: "dash", name: "dash" },
+  { id: "grapple", name: "grapple / skill" },
+  { id: "reload", name: "reload" },
+  { id: "melee", name: "melee" },
+  { id: "grenade", name: "grenade" },
+  { id: "inspect", name: "inspect weapon" },
+  { id: "emote", name: "emote wheel" },
+  { id: "slot1", name: "weapon 1" },
+  { id: "slot2", name: "weapon 2" },
+  { id: "slot3", name: "weapon 3" },
+  { id: "slot4", name: "weapon 4" },
+  { id: "nextWeapon", name: "next weapon" },
+  { id: "score", name: "scoreboard" },
+];
+
+const BINDING_KEY = "doodle_binds";
+
+function loadBindings(): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  for (const [a, keys] of Object.entries(DEFAULT_KEYS)) out[a] = [...keys];
+  try {
+    const saved = JSON.parse(localStorage.getItem(BINDING_KEY) || "null");
+    if (saved && typeof saved === "object") {
+      for (const [a, k] of Object.entries(saved as Record<string, unknown>)) {
+        if (a in out && typeof k === "string" && k) out[a] = [k];
+      }
+    }
+  } catch {
+    // a corrupt binding file should cost you the customisation, not the game
+  }
+  return out;
+}
+
+/** action per key code, rebuilt whenever a binding changes */
+let KEYMAP: Record<string, string> = {};
+
+function rebuild(bindings: Record<string, string[]>) {
+  KEYMAP = {};
+  for (const [action, keys] of Object.entries(bindings)) {
+    for (const k of keys) KEYMAP[k] = action;
+  }
+}
+
+let bindings = loadBindings();
+rebuild(bindings);
+
+export function currentBindings() {
+  return bindings;
+}
+
+/** Bind one action to one key, dropping that key from wherever it was. */
+export function setBinding(action: string, code: string) {
+  if (!(action in DEFAULT_KEYS)) return;
+  for (const a of Object.keys(bindings)) {
+    if (a !== action) bindings[a] = bindings[a].filter((k) => k !== code);
+  }
+  bindings[action] = [code];
+  rebuild(bindings);
+  // Save only what actually differs. Writing every action would freeze the
+  // aliases as they are today and quietly drop the arrow keys from the actions
+  // the player never touched.
+  const diff: Record<string, string> = {};
+  for (const [a, keys] of Object.entries(bindings)) {
+    const def = DEFAULT_KEYS[a] ?? [];
+    const same = keys.length === def.length && keys.every((k, i) => k === def[i]);
+    if (!same && keys[0]) diff[a] = keys[0];
+  }
+  localStorage.setItem(BINDING_KEY, JSON.stringify(diff));
+}
+
+export function resetBindings() {
+  localStorage.removeItem(BINDING_KEY);
+  bindings = loadBindings();
+  rebuild(bindings);
+}
+
+/** "KeyW" reads badly on a settings row; "W" does not. */
+export function keyLabel(code: string) {
+  if (!code) return "—";
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  if (code.startsWith("Arrow")) return code.slice(5).toLowerCase();
+  const named: Record<string, string> = {
+    Space: "space",
+    ShiftLeft: "l shift",
+    ShiftRight: "r shift",
+    ControlLeft: "l ctrl",
+    ControlRight: "r ctrl",
+    AltLeft: "l alt",
+    AltRight: "r alt",
+    Tab: "tab",
+    Escape: "esc",
+    Backquote: "`",
+  };
+  return named[code] ?? code.toLowerCase();
+}
 const MOUSEMAP: Record<number, string> = { 0: "fire", 2: "aim", 1: "melee" };
 const PADMAP: Record<number, string> = {
   0: "jump",

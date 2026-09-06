@@ -283,6 +283,13 @@ export class Game {
     return this.streaks.use(kind);
   }
 
+  /** 0 means uncapped; otherwise the shortest gap between frames, in ms. */
+  private frameMin = 0;
+
+  setFpsCap(fps: number) {
+    this.frameMin = fps > 0 ? 1000 / fps : 0;
+  }
+
   /** Apply a graphics preset to a running game. */
   setQuality(q: Quality) {
     this.R.setQuality(q);
@@ -358,6 +365,7 @@ export class Game {
             pitch: this.player.pitch,
             hp: this.player.hp,
             alive: this.player.alive,
+            emote: this.player.emote,
             crouching: this.player.crouching,
             sliding: this.player.sliding,
             onGround: this.player.onGround,
@@ -657,6 +665,9 @@ export class Game {
   private loop = (now: number) => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
+    // A cap saves battery on a phone that would otherwise render 120 frames it
+    // cannot sustain. The slack keeps a 60Hz display from dropping to 30.
+    if (this.frameMin > 0 && now - this.last < this.frameMin - 1) return;
     const raw = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     this.input.update(raw);

@@ -14,6 +14,7 @@ import * as THREE from "three";
 import { humanoid, TYPES, type BodyParts, type TypeDef } from "./enemies";
 import { INK } from "./renderer";
 import { clamp, damp, rand } from "./math";
+import { EMOTES, armPose, emoteFromIndex, emoteIndex, type EmoteKind } from "./emotes";
 
 /** Anything a bullet can find that is not an Enemy. */
 export interface NetTarget {
@@ -54,9 +55,11 @@ export interface LocalSnapshotSource {
   aiming: boolean;
   weaponIndex: number;
   weapon: { blocking: boolean };
+  /** bots never emote, so this is optional on the wire */
+  emote?: EmoteKind | null;
 }
 
-/** What a player broadcasts about itself, kept small: 11 numbers. */
+/** What a player broadcasts about itself, kept small: 12 numbers. */
 export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
   const flags =
     (p.crouching ? F_CROUCH : 0) |
@@ -78,6 +81,7 @@ export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
     +p.vel.x.toFixed(1),
     +p.vel.y.toFixed(1),
     +p.vel.z.toFixed(1),
+    emoteIndex(p.emote ?? null),
   ];
 }
 
@@ -117,6 +121,8 @@ function nameSprite(name: string, ink: number): THREE.Sprite | null {
 }
 
 export class RemotePlayer implements NetTarget {
+  emote: EmoteKind | null = null;
+  private emoteT = 0;
   id: string;
   name: string;
   team: number;
@@ -194,6 +200,12 @@ export class RemotePlayer implements NetTarget {
     this.hp = snap[7];
     if (snap.length > 10) this.vel.set(snap[8], snap[9], snap[10]);
     else this.vel.set(0, 0, 0);
+
+    const em = emoteFromIndex(snap[11] ?? 0);
+    if (em !== this.emote) {
+      this.emote = em;
+      this.emoteT = 0;
+    }
 
     // first snapshot, or coming back from the dead: snap rather than glide in
     if (!this.visible) {
@@ -277,6 +289,23 @@ export class RemotePlayer implements NetTarget {
       P.lleg.rotation.x = -0.5;
       P.rleg.rotation.x = 0.6;
     }
+    // an emote owns the arms outright; the same pose the emoter is playing
+    if (this.emote && EMOTES[this.emote] && !EMOTES[this.emote].holdsWeapon) {
+      this.emoteT += dt;
+      const def = EMOTES[this.emote];
+      if (this.emoteT >= def.dur) this.emote = null;
+      else {
+        const pose = armPose(this.emote, this.emoteT / def.dur);
+        P.larm.rotation.set(pose.left.x, pose.left.y, pose.left.z);
+        P.rarm.rotation.set(pose.right.x, pose.right.y, pose.right.z);
+        P.head.rotation.z = pose.headTilt;
+        P.torso.rotation.x = damp(P.torso.rotation.x, 0, 10, dt);
+        void c;
+        return;
+      }
+    }
+    P.head.rotation.z = damp(P.head.rotation.z, 0, 10, dt);
+
     // guns come up and forward; the blade hangs until it is raised to guard
     const aim = this.aiming ? 1 : 0.9;
     const look = clamp(this.pitch, -1.1, 1.1);
