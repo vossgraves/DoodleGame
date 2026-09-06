@@ -688,10 +688,27 @@ canvas.game-canvas {
   width: 26px;
   height: 13px;
 }
+.wicon.big {
+  width: 58px;
+  height: 29px;
+}
+/* icon-only: the silhouette is the label, so give it room to read */
 .gun-chip.withicon {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-content: center;
+  padding: 5px 10px;
+}
+.gun-chip.withicon .wicon {
+  width: 46px;
+  height: 23px;
+}
+
+.slot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .gun-chip {

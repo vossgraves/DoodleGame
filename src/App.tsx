@@ -1069,8 +1069,9 @@ function LoadoutScreen({
 
         {[0, 1, 2].map((slot) => (
           <div key={slot} className="mt-5">
-            <div className="mb-2 border-b-2 border-[var(--ink)] text-2xl">
-              slot {slot + 1} <span className="text-lg opacity-60">· {WEAPONS.find((w) => w.kind === carried[slot])?.name}</span>
+            <div className="mb-2 flex items-center gap-3 border-b-2 border-[var(--ink)] text-2xl">
+              <span>slot {slot + 1}</span>
+              <WeaponIcon kind={carried[slot]} className="wicon big" />
             </div>
             <div className="flex flex-wrap gap-2">
               {GUNS.map((w) => (
@@ -1078,10 +1079,10 @@ function LoadoutScreen({
                   key={w.kind}
                   className={`gun-chip withicon ${carried[slot] === w.kind ? "on" : ""}`}
                   onClick={() => setSlot(slot, w.kind)}
-                  title={w.hint}
+                  aria-label={w.name}
+                  title={`${w.name} — ${w.hint}`}
                 >
                   <WeaponIcon kind={w.kind} />
-                  <span>{w.name}</span>
                 </button>
               ))}
             </div>
@@ -1092,8 +1093,9 @@ function LoadoutScreen({
           {carried.map((k) => {
             const w = WEAPONS.find((x) => x.kind === k);
             return (
-              <div key={k}>
-                <b>{w?.name}</b> — {w?.hint}
+              <div key={k} className="flex items-center gap-3">
+                <WeaponIcon kind={k} />
+                <span>{w?.hint}</span>
               </div>
             );
           })}
@@ -1193,7 +1195,6 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
               <div key={s.name} className={`m-wep ${s.active ? "on" : ""} ${s.empty ? "empty" : ""}`}>
                 <span className="n">{i + 1}</span>
                 <WeaponIcon kind={s.kind} className="wicon sm" />
-                {s.active && <span className="nm">{s.name}</span>}
                 <span className="am">{s.ammo}</span>
               </div>
             ))}
@@ -1245,12 +1246,14 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
           <div className="hud-br hud-bit">
             <div className="mb-1 flex flex-col items-end">
               {hud.slots.map((s, i) => (
-                <div key={s.name} className={`slot ${s.active ? "active" : ""} ${s.empty ? "empty" : ""}`}>
-                  {i + 1} {s.name} <span className="text-base opacity-70">{s.ammo}</span>
+                <div key={s.name} className={`slot ${s.active ? "active" : ""} ${s.empty ? "empty" : ""}`} title={s.name}>
+                  <span className="opacity-60">{i + 1}</span>
+                  <WeaponIcon kind={s.kind} />
+                  <span className="text-base opacity-70">{s.ammo}</span>
                 </div>
               ))}
             </div>
-            <div className="text-3xl">{hud.weapon}</div>
+            <WeaponIcon kind={hud.slots[hud.slots.findIndex((s) => s.active)]?.kind ?? "rifle"} className="wicon big" />
             <div className="text-lg opacity-70">{hud.hint}</div>
           </div>
         </>
