@@ -259,10 +259,13 @@ export default function App() {
           onChange={(l) => {
             setLoadout(l);
             localStorage.setItem("doodle_loadout", JSON.stringify(l));
-            // no-ops when signed out; localStorage stays the source of truth then
-            void account.saveProfile(l, {});
+            // coalesced: tapping through chips must not be one API call each
+            account.saveProfileSoon(l);
           }}
-          onBack={() => setScreen("menu")}
+          onBack={() => {
+            account.flushProfile();
+            setScreen("menu");
+          }}
         />
       )}
       {screen === "settings" && (

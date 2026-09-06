@@ -130,6 +130,38 @@ export async function saveProfile(loadout: string[], settings: Record<string, un
   }
 }
 
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+let pending: { loadout: string[]; settings: Record<string, unknown> } | null = null;
+
+/**
+ * Coalesce profile writes.
+ *
+ * Tapping through the loadout fires a change per chip; without this that is one
+ * serverless invocation and one database round trip each, which is a silly way
+ * to spend a free tier. Only the last state in a 1.2s window is ever sent.
+ */
+export function saveProfileSoon(loadout: string[], settings: Record<string, unknown> = {}) {
+  if (!savedToken()) return;
+  pending = { loadout, settings };
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    const p = pending;
+    pending = null;
+    if (p) void saveProfile(p.loadout, p.settings);
+  }, 1200);
+}
+
+/** Flush any queued write immediately, e.g. when leaving the loadout screen. */
+export function flushProfile() {
+  if (!saveTimer || !pending) return;
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  const p = pending;
+  pending = null;
+  void saveProfile(p.loadout, p.settings);
+}
+
 export async function reportStats(s: Partial<Record<string, number>>): Promise<boolean> {
   if (!savedToken()) return false;
   try {
