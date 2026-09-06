@@ -73,10 +73,33 @@ const emptyHud = (): HudSnap => ({
   focusFrac: 0,
   focusReady: false,
   canSwap: false,
+  radar: [],
+  radarSelf: { x: 0, z: 0, yaw: 0 },
+  radarHalf: 40,
 });
 
 function isTouchDevice() {
   return "ontouchstart" in window || navigator.maxTouchPoints > 0;
+}
+
+/** Portrait cannot fit a stick, a fire button and a readable HUD side by side. */
+function RotatePrompt() {
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center p-6 paper-bg">
+      <div className="ink-panel px-8 py-9 text-center">
+        <svg className="mx-auto mb-4 block" width="86" height="86" viewBox="0 0 48 48" aria-hidden="true">
+          <g fill="none" stroke="var(--ink)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="17" y="6" width="14" height="24" rx="2.5" />
+            <path d="M24 10.5v.01M24 26.5v.01" />
+            <path d="M9 34a17 17 0 0 0 30 0" />
+            <path d="M9 34l4.5-3M9 34l1 5" />
+          </g>
+        </svg>
+        <h2 className="m-0 font-[Caveat,cursive] text-5xl">turn your phone</h2>
+        <p className="mt-2 text-xl opacity-75">the stick and the fire button need the width</p>
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -91,6 +114,7 @@ export default function App() {
   // MatchNet lives outside React; bump this to re-read it
   const [netTick, setNetTick] = useState(0);
   const [swapping, setSwapping] = useState(false);
+  const [portrait, setPortrait] = useState(false);
   const [me, setMe] = useState<account.Account | null>(null);
   const [stats, setStats] = useState<account.Stats | null>(null);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
@@ -99,6 +123,7 @@ export default function App() {
   const [sens, setSens] = useState(Number(localStorage.getItem("doodle_sens") || 100));
   const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
+  const [adsToggle, setAdsToggle] = useState(localStorage.getItem("doodle_ads_toggle") === "1");
   const [hitInk, setHitInk] = useState(() => readInkSetting("doodle_hit_ink", 1));
   const [tracerInk, setTracerInk] = useState(() => readInkSetting("doodle_tracer_ink", 3));
   const [quality, setQuality] = useState<Quality>(() => {
@@ -119,6 +144,25 @@ export default function App() {
     setTouch(isTouchDevice());
   }, []);
 
+  // The controls assume landscape — the thumb zones need the width. Track
+  // orientation so portrait gets a rotate prompt instead of a broken layout.
+  useEffect(() => {
+    const mq = window.matchMedia("(orientation: portrait)");
+    const update = () => setPortrait(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  // Best effort: most browsers only honour this in fullscreen, hence the prompt.
+  useEffect(() => {
+    if (screen !== "game" || !touch) return;
+    const o = window.screen?.orientation as (ScreenOrientation & { lock?: (s: string) => Promise<void> }) | undefined;
+    o?.lock?.("landscape").catch(() => {
+      /* not permitted outside fullscreen; the prompt covers it */
+    });
+  }, [screen, touch]);
+
   // the window can lapse while the menu is open; do not leave it stranded
   useEffect(() => {
     if (swapping && !hud.canSwap) setSwapping(false);
@@ -136,8 +180,9 @@ export default function App() {
     if (!g) return;
     g.combat.hitInk = hitInk;
     g.combat.tracerInk = tracerInk;
+    g.player.adsToggle = adsToggle;
     g.setQuality(quality);
-  }, [hitInk, tracerInk, quality, runId, screen]);
+  }, [hitInk, tracerInk, quality, adsToggle, runId, screen]);
 
   // Resume a saved session if there is one. No backend just means stay signed out.
   useEffect(() => {
@@ -212,6 +257,8 @@ export default function App() {
     setBestZ(Number(localStorage.getItem("doodle_zbest") || 0));
     setScreen("menu");
   };
+
+  if (touch && portrait) return <RotatePrompt />;
 
   return (
     <div className="relative h-full w-full overflow-hidden paper-bg">
@@ -305,6 +352,11 @@ export default function App() {
           onTracerInk={(v) => {
             setTracerInk(v);
             localStorage.setItem("doodle_tracer_ink", String(v));
+          }}
+          adsToggle={adsToggle}
+          onAdsToggle={(v) => {
+            setAdsToggle(v);
+            localStorage.setItem("doodle_ads_toggle", v ? "1" : "0");
           }}
           quality={quality}
           onQuality={(q) => {
@@ -599,6 +651,8 @@ function Settings({
   tracerInk,
   onHitInk,
   onTracerInk,
+  adsToggle,
+  onAdsToggle,
   quality,
   onQuality,
   onBack,
@@ -613,6 +667,8 @@ function Settings({
   tracerInk: number;
   onHitInk: (v: number) => void;
   onTracerInk: (v: number) => void;
+  adsToggle: boolean;
+  onAdsToggle: (v: boolean) => void;
   quality: Quality;
   onQuality: (q: Quality) => void;
   onBack: () => void;
@@ -638,6 +694,10 @@ function Settings({
           <label className="flex flex-col items-center gap-2">
             look sensitivity {sens}%
             <input className="ink-range" type="range" min={40} max={200} value={sens} onChange={(e) => onSens(Number(e.target.value))} />
+          </label>
+          <label className="flex items-center gap-3">
+            <input type="checkbox" checked={adsToggle} onChange={(e) => onAdsToggle(e.target.checked)} />
+            aim is a toggle, not a hold
           </label>
           <label className="flex items-center gap-3">
             <input type="checkbox" checked={invert} onChange={(e) => onInvert(e.target.checked)} />
@@ -859,7 +919,7 @@ function Online({
   // ---- match over ----
   if (m.state === "over") {
     return (
-      <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.72)]">
+      <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.72)] p-4">
         <div className="ink-panel max-w-[520px] px-10 py-8 text-center">
           <h2 className="m-0 font-[Caveat,cursive] text-5xl text-[var(--red)]">{m.winner} wins</h2>
           <div className="mt-4 text-left text-xl">
@@ -894,7 +954,7 @@ function Online({
   if (m.state === "lobby") {
     const rows = [...m.roster.values()];
     return (
-      <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.72)] p-4">
+      <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.72)] p-4">
         <div className="ink-panel w-full max-w-[560px] px-8 py-7 text-center">
           <h2 className="m-0 font-[Caveat,cursive] text-5xl">lobby</h2>
           <p className="mt-1 text-2xl">
@@ -976,7 +1036,7 @@ function Online({
 
   // ---- not connected yet ----
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.72)] p-4">
+    <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.72)] p-4">
       <div className="ink-panel w-full max-w-[560px] px-8 py-7 text-center">
         <h2 className="m-0 font-[Caveat,cursive] text-5xl">play online</h2>
         <p className="mt-1 text-lg opacity-70">no server — you connect straight to the other players</p>
@@ -1145,6 +1205,56 @@ function LoadoutScreen({
   );
 }
 
+/**
+ * Minimap. Blips arrive in world space and get rotated into the player's frame
+ * here, so "up" is always the way you are facing — which is what you actually
+ * read a minimap for.
+ */
+function Minimap({ hud }: { hud: HudSnap }) {
+  const R = 50;
+  const half = hud.radarHalf || 40;
+  const scale = R / half;
+  const me = hud.radarSelf;
+  // the player's own basis, straight out of the movement code
+  const fwdX = -Math.sin(me.yaw);
+  const fwdZ = -Math.cos(me.yaw);
+  const rgtX = Math.cos(me.yaw);
+  const rgtZ = -Math.sin(me.yaw);
+
+  const blips = hud.radar
+    .map((b) => {
+      const dx = b.x - me.x;
+      const dz = b.z - me.z;
+      return {
+        x: (dx * rgtX + dz * rgtZ) * scale,
+        y: -(dx * fwdX + dz * fwdZ) * scale,
+        hostile: b.hostile,
+      };
+    })
+    .filter((b) => b.x * b.x + b.y * b.y < R * R);
+
+  return (
+    <div className="minimap hud-bit">
+      <svg viewBox="-58 -58 116 116" width="100%" height="100%" aria-hidden="true">
+        <circle cx="0" cy="0" r="53" fill="rgba(246,243,230,0.45)" stroke="var(--ink)" strokeWidth="2.5" />
+        <line x1="0" y1="-53" x2="0" y2="-44" stroke="var(--ink)" strokeWidth="2.5" strokeLinecap="round" />
+        {blips.map((b, i) => (
+          <circle
+            key={i}
+            cx={b.x}
+            cy={b.y}
+            r="4.2"
+            fill={b.hostile ? "var(--red)" : "var(--ink)"}
+            opacity={b.hostile ? 0.95 : 0.55}
+          />
+        ))}
+        {/* you, always dead centre, always pointing up */}
+        <path d="M0 -8 L6 7 L0 3.5 L-6 7 Z" fill="var(--ink)" />
+      </svg>
+    </div>
+  );
+}
+
 /** Rounded rifle round, PUBG-style, so the ammo count reads at a glance. */
 function Bullet() {
   return (
@@ -1196,6 +1306,8 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
         </div>
         <div className="text-[var(--red)]">{hud.combo > 1 ? `combo x${hud.combo}` : ""}</div>
       </div>
+      <Minimap hud={hud} />
+
       {/* waves are a PvE idea; the arena has none */}
       {hud.mode !== "arena" && (
         <div className="hud-tr hud-bit">
@@ -1322,7 +1434,7 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
 
 function PauseOverlay({ onResume, onMenu }: { onResume: () => void; onMenu: () => void }) {
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.62)]">
+    <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.62)] p-4">
       <div className="ink-panel px-12 py-8 text-center">
         <h2 className="m-0 font-[Caveat,cursive] text-6xl">paused</h2>
         <p className="mt-2 text-xl opacity-80">the doodles are waiting</p>
@@ -1342,7 +1454,7 @@ function PauseOverlay({ onResume, onMenu }: { onResume: () => void; onMenu: () =
 function DeadOverlay({ hud, onRetry, onMenu }: { hud: HudSnap; onRetry: () => void; onMenu: () => void }) {
   const t = Math.floor(hud.time);
   return (
-    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.7)]">
+    <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.7)] p-4">
       <div className="ink-panel max-w-[560px] px-10 py-8 text-center">
         <h2 className="m-0 font-[Caveat,cursive] text-6xl text-[var(--red)]">ERASED</h2>
         <p className="mt-1 text-2xl">{hud.mode === "zombies" ? "the page is overrun" : "the doodles won"}</p>

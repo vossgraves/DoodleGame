@@ -62,6 +62,10 @@ export interface HudSnap {
   focusReady: boolean;
   /** the brief post-respawn window where the kit can still be swapped */
   canSwap: boolean;
+  /** minimap blips in world space; the UI rotates them into the player's frame */
+  radar: { x: number; z: number; hostile: boolean }[];
+  radarSelf: { x: number; z: number; yaw: number };
+  radarHalf: number;
 }
 
 const defaultHud = (): HudSnap => ({
@@ -101,6 +105,9 @@ const defaultHud = (): HudSnap => ({
   focusFrac: 0,
   focusReady: false,
   canSwap: false,
+  radar: [],
+  radarSelf: { x: 0, z: 0, yaw: 0 },
+  radarHalf: 40,
 });
 
 export class Game {
@@ -127,6 +134,7 @@ export class Game {
   maxAlive = 8;
   hitstopT = 0;
   swapWindow = 0;
+  private radarAt = -1;
   best: number;
   hud: HudSnap = defaultHud();
   onHud: ((h: HudSnap) => void) | null = null;
@@ -193,6 +201,7 @@ export class Game {
       onDeath: () => this.handleDeath(),
       loadout,
     });
+    this.player.adsToggle = localStorage.getItem("doodle_ads_toggle") === "1";
     this.player.reset(this.level.playerStart);
 
     this.match = new MatchNet({
@@ -522,6 +531,19 @@ export class Game {
 
     const moving = this.player.onGround && Math.hypot(this.player.vel.x, this.player.vel.z) > 1.2;
     this.audio.update(raw, moving && this.state === "playing", this.player.sprinting);
+
+    // the radar only needs a dozen refreshes a second, not one per frame
+    if (this.time - this.radarAt > 0.08) {
+      this.radarAt = this.time;
+      const blips: HudSnap["radar"] = [];
+      for (const e of this.combat.enemies) if (e.alive) blips.push({ x: e.pos.x, z: e.pos.z, hostile: true });
+      for (const r of this.match.remotes.values()) {
+        if (r.alive) blips.push({ x: r.pos.x, z: r.pos.z, hostile: this.match.canHurt(r.id) });
+      }
+      this.hud.radar = blips;
+      this.hud.radarSelf = { x: this.player.pos.x, z: this.player.pos.z, yaw: this.player.yaw };
+      this.hud.radarHalf = getMap(this.mapKey).half;
+    }
 
     const wpn = this.player.weapon;
     const boss = this.combat.enemies.find((e) => e.alive && e.def.boss);

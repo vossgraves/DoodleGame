@@ -630,6 +630,9 @@ export class Player {
   meleeStreak = 0;
   /** true once this life has fired, thrown or swung — closes the loadout window */
   spentResource = false;
+  /** aim-down-sights as a toggle rather than hold; a settings choice */
+  adsToggle = false;
+  private adsOn = false;
   private lastGround = true;
 
   constructor(hooks: PlayerHooks) {
@@ -681,6 +684,7 @@ export class Player {
     if (i < 0 || i >= this.weapons.length) return;
     if (i === this.weaponIndex && !silent) return;
     this.weapon.unequip();
+    this.adsOn = false; // a toggled scope must not survive a weapon change
     this.weaponIndex = i;
     this.weapon = this.weapons[i];
     this.weapon.equip();
@@ -813,8 +817,13 @@ export class Player {
     this.yaw += i.look.x;
     this.pitch = clamp(this.pitch + i.look.y, -1.45, 1.45);
 
-    this.aiming = i.down("aim") && this.weapon.def.isGun;
-    this.weapon.blocking = !this.weapon.def.isGun && i.down("aim");
+    if (this.adsToggle) {
+      if (i.pressed("aim")) this.adsOn = !this.adsOn;
+    } else {
+      this.adsOn = i.down("aim");
+    }
+    this.aiming = this.adsOn && this.weapon.def.isGun;
+    this.weapon.blocking = !this.weapon.def.isGun && this.adsOn;
 
     if (i.pressed("slot1")) this.switchTo(0);
     if (i.pressed("slot2")) this.switchTo(1);
@@ -1061,13 +1070,14 @@ export class Player {
     const aim = new THREE.Vector3(0.0, -0.14, -0.32);
     const p = w.root.position;
     p.lerpVectors(base, aim, ads);
-    p.x += Math.sin(this.bobPhase) * 0.012 * this.bobAmt * (1 - ads) + sprint * 0.08;
-    p.y += Math.abs(Math.cos(this.bobPhase)) * 0.012 * this.bobAmt * (1 - ads) - sprint * 0.1 + this.landDip.value * 0.004;
-    p.z += sprint * 0.04;
+    // sprinting swings the gun down and across so it reads instantly as "running"
+    p.x += Math.sin(this.bobPhase) * 0.012 * this.bobAmt * (1 - ads) + sprint * 0.17;
+    p.y += Math.abs(Math.cos(this.bobPhase)) * 0.012 * this.bobAmt * (1 - ads) - sprint * 0.2 + this.landDip.value * 0.004;
+    p.z += sprint * 0.1;
     w.root.rotation.set(
-      0.04 * (1 - ads) + sprint * 0.45 + this.recoilP.value * 0.015,
-      -sprint * 0.5 + this.lookDelta.x * 0.4,
-      this.lookDelta.x * -0.5 + this.recoilY.value * 0.02 + this.slideT * 0.1,
+      0.04 * (1 - ads) + sprint * 0.95 + this.recoilP.value * 0.015,
+      -sprint * 0.85 + this.lookDelta.x * 0.4,
+      this.lookDelta.x * -0.5 + this.recoilY.value * 0.02 + this.slideT * 0.1 + sprint * 0.35,
     );
     // swing the new weapon up from below rather than popping it into frame
     if (w.equipT > 0) {

@@ -28,12 +28,23 @@ interface SkillProfile {
   speed: number;
 }
 
+/**
+ * Ranges are deliberately short. The maps are only 64-80 units across, so the
+ * old 75-unit elite range meant a bot could shoot you from anywhere on the map
+ * the instant it had line of sight, which reads as cheating rather than skill.
+ * They now have to close in, and their aim degrades with distance on top.
+ */
 export const BOT_SKILLS: Record<BotSkill, SkillProfile> = {
-  recruit: { turn: 2.6, error: 0.085, reaction: 0.62, fireGap: [0.5, 1.1], damage: 9, range: 38, hp: 100, speed: 5.2 },
-  regular: { turn: 4.4, error: 0.05, reaction: 0.42, fireGap: [0.32, 0.7], damage: 13, range: 48, hp: 110, speed: 6.0 },
-  veteran: { turn: 7.0, error: 0.026, reaction: 0.28, fireGap: [0.22, 0.48], damage: 17, range: 60, hp: 120, speed: 6.6 },
-  elite: { turn: 10.5, error: 0.014, reaction: 0.18, fireGap: [0.15, 0.34], damage: 21, range: 75, hp: 130, speed: 7.2 },
+  recruit: { turn: 2.6, error: 0.085, reaction: 0.62, fireGap: [0.5, 1.1], damage: 9, range: 18, hp: 100, speed: 5.2 },
+  regular: { turn: 4.4, error: 0.05, reaction: 0.42, fireGap: [0.32, 0.7], damage: 13, range: 24, hp: 110, speed: 6.0 },
+  veteran: { turn: 7.0, error: 0.026, reaction: 0.28, fireGap: [0.22, 0.48], damage: 17, range: 30, hp: 120, speed: 6.6 },
+  elite: { turn: 10.5, error: 0.014, reaction: 0.18, fireGap: [0.15, 0.34], damage: 21, range: 36, hp: 130, speed: 7.2 },
 };
+
+/** Aim error multiplies with distance — a bot at 20m should not shoot like one at 5m. */
+const SPREAD_PER_METRE = 1 / 14;
+/** They look for someone much further than they will shoot, so they still come to you. */
+const HUNT_MULTIPLIER = 2.8;
 
 export const BOT_NAMES = [
   "Scribble", "Inkling", "Smudge", "Blot", "Doodle", "Sketch", "Crosshatch", "Margin",
@@ -222,7 +233,7 @@ export class Bot implements LocalSnapshotSource {
       // in FFA everyone is nominally team 0, so only skip allies in team modes
       if (this.hooks.teamPlay() && c.team === this.team) continue;
       const d = eye.distanceTo(c.center);
-      if (d > this.p.range) continue;
+      if (d > this.p.range * HUNT_MULTIPLIER) continue;
       // visible targets are hugely preferred over merely close ones
       const visible = this.hooks.world.hasLineOfSight(eye, c.center);
       const score = d * (visible ? 1 : 4);
@@ -244,11 +255,12 @@ export class Bot implements LocalSnapshotSource {
     if (visible) this.seenT += dt;
     else this.seenT = Math.max(0, this.seenT - dt * 0.5);
 
-    // aim
+    // aim — error grows with range, so distant shots genuinely miss
     const to = new THREE.Vector3().subVectors(t.center, eye);
     const dist = to.length();
-    const wantYaw = Math.atan2(-to.x, -to.z) + this.aimErr.x;
-    const wantPitch = Math.asin(clamp(to.y / Math.max(0.001, dist), -1, 1)) + this.aimErr.y;
+    const spread = 1 + dist * SPREAD_PER_METRE;
+    const wantYaw = Math.atan2(-to.x, -to.z) + this.aimErr.x * spread;
+    const wantPitch = Math.asin(clamp(to.y / Math.max(0.001, dist), -1, 1)) + this.aimErr.y * spread;
     this.yaw = slew(this.yaw, wantYaw, this.p.turn * dt);
     this.pitch = clamp(this.pitch + clamp(wantPitch - this.pitch, -this.p.turn * dt, this.p.turn * dt), -1.2, 1.2);
 
@@ -268,9 +280,9 @@ export class Bot implements LocalSnapshotSource {
     else want.addScaledVector(flat, 0.25).addScaledVector(side, 1);
     this.drive(want, dt);
 
-    // fire
+    // fire — and never from beyond the engagement range, even with a clear line
     this.fireT -= dt;
-    if (!visible || this.seenT < this.p.reaction || this.fireT > 0) return;
+    if (!visible || dist > this.p.range || this.seenT < this.p.reaction || this.fireT > 0) return;
     const aimDir = this.forwardVec();
     const cone = to.clone().divideScalar(dist);
     if (aimDir.dot(cone) < 0.985) return;

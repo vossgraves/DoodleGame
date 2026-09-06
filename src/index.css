@@ -713,6 +713,34 @@ canvas.game-canvas {
 .gun-chip.withicon.on .wname {
   opacity: 1;
 }
+/* minimap sits top-right, the way every mobile shooter puts it */
+.minimap {
+  position: absolute;
+  top: calc(10px + env(safe-area-inset-top));
+  right: calc(10px + env(safe-area-inset-right));
+  width: 104px;
+  height: 104px;
+}
+.hud-root.touch .minimap {
+  width: 84px;
+  height: 84px;
+}
+/* On a phone the whole right edge is buttons, so the wave readout stacks under
+   the score on the left instead of fighting the minimap and the weapon key. */
+.hud-root.touch .hud-tr {
+  top: calc(52px + env(safe-area-inset-top));
+  left: 8%;
+  right: auto;
+  text-align: left;
+  transform: rotate(-1deg);
+}
+.hud-root:not(.touch) .hud-tr {
+  top: calc(120px + env(safe-area-inset-top));
+}
+.touch-layer .tbtn.pause {
+  right: calc(104px + env(safe-area-inset-right));
+}
+
 /* the post-respawn kit swap, out of the way of both thumbs */
 .swap-btn {
   position: absolute;
