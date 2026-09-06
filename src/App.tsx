@@ -4,6 +4,8 @@ import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
 import { WEAPONS, sanitizeLoadout, type WeaponKind } from "./game/player";
 import { SCORE_TARGET, type MatchMode, type MatchNet } from "./game/match";
 import type { BotSkill } from "./game/bot";
+import { WeaponIcon } from "./WeaponIcon";
+import { QUALITY, isQuality, type Quality } from "./game/renderer";
 import * as account from "./game/account";
 
 type Screen = "menu" | "howto" | "settings" | "loadout" | "account" | "game";
@@ -97,6 +99,10 @@ export default function App() {
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
   const [hitInk, setHitInk] = useState(() => readInkSetting("doodle_hit_ink", 1));
   const [tracerInk, setTracerInk] = useState(() => readInkSetting("doodle_tracer_ink", 3));
+  const [quality, setQuality] = useState<Quality>(() => {
+    const s = localStorage.getItem("doodle_quality");
+    return isQuality(s) ? s : "high";
+  });
   const [bestD, setBestD] = useState(Number(localStorage.getItem("doodle_best") || 0));
   const [bestZ, setBestZ] = useState(Number(localStorage.getItem("doodle_zbest") || 0));
   const [runId, setRunId] = useState(0);
@@ -113,13 +119,14 @@ export default function App() {
     if (hex) document.documentElement.style.setProperty("--hit", hex);
   }, [hitInk]);
 
-  // live-apply the colours to a running match without a restart
+  // live-apply the colours and graphics preset without a restart
   useEffect(() => {
     const g = gameRef.current;
     if (!g) return;
     g.combat.hitInk = hitInk;
     g.combat.tracerInk = tracerInk;
-  }, [hitInk, tracerInk, runId, screen]);
+    g.setQuality(quality);
+  }, [hitInk, tracerInk, quality, runId, screen]);
 
   // Resume a saved session if there is one. No backend just means stay signed out.
   useEffect(() => {
@@ -284,6 +291,11 @@ export default function App() {
           onTracerInk={(v) => {
             setTracerInk(v);
             localStorage.setItem("doodle_tracer_ink", String(v));
+          }}
+          quality={quality}
+          onQuality={(q) => {
+            setQuality(q);
+            localStorage.setItem("doodle_quality", q);
           }}
           onBack={() => setScreen("menu")}
         />
@@ -553,6 +565,8 @@ function Settings({
   tracerInk,
   onHitInk,
   onTracerInk,
+  quality,
+  onQuality,
   onBack,
 }: {
   sens: number;
@@ -565,6 +579,8 @@ function Settings({
   tracerInk: number;
   onHitInk: (v: number) => void;
   onTracerInk: (v: number) => void;
+  quality: Quality;
+  onQuality: (q: Quality) => void;
   onBack: () => void;
 }) {
   return (
@@ -572,6 +588,17 @@ function Settings({
       <div className="ink-panel mx-auto w-full max-w-[520px] px-8 py-7 text-center">
         <h2 className="m-0 font-[Caveat,cursive] text-5xl">settings</h2>
         <div className="mt-6 flex flex-col items-center gap-5 text-2xl">
+          <div className="flex flex-col items-center gap-2">
+            <span>graphics</span>
+            <div className="flex flex-wrap justify-center gap-2">
+              {(Object.keys(QUALITY) as Quality[]).map((q) => (
+                <button key={q} className={`gun-chip ${quality === q ? "on" : ""}`} onClick={() => onQuality(q)}>
+                  {q}
+                </button>
+              ))}
+            </div>
+            <span className="text-base opacity-60">higher draws at more of your screen's real pixels</span>
+          </div>
           <InkPicker label="hit colour" value={hitInk} onChange={onHitInk} />
           <InkPicker label="fire projection" value={tracerInk} onChange={onTracerInk} />
           <label className="flex flex-col items-center gap-2">
@@ -1046,11 +1073,12 @@ function LoadoutScreen({
               {GUNS.map((w) => (
                 <button
                   key={w.kind}
-                  className={`gun-chip ${carried[slot] === w.kind ? "on" : ""}`}
+                  className={`gun-chip withicon ${carried[slot] === w.kind ? "on" : ""}`}
                   onClick={() => setSlot(slot, w.kind)}
                   title={w.hint}
                 >
-                  {w.name}
+                  <WeaponIcon kind={w.kind} />
+                  <span>{w.name}</span>
                 </button>
               ))}
             </div>
@@ -1161,6 +1189,7 @@ function HUD({ hud, hidden, touch }: { hud: HudSnap; hidden: boolean; touch: boo
                  so the row cannot outgrow the space between the thumbs */
               <div key={s.name} className={`m-wep ${s.active ? "on" : ""} ${s.empty ? "empty" : ""}`}>
                 <span className="n">{i + 1}</span>
+                <WeaponIcon kind={s.kind} className="wicon sm" />
                 {s.active && <span className="nm">{s.name}</span>}
                 <span className="am">{s.ammo}</span>
               </div>

@@ -678,6 +678,22 @@ canvas.game-canvas {
   color: var(--red);
 }
 
+.wicon {
+  width: 40px;
+  height: 20px;
+  display: block;
+  flex: none;
+}
+.wicon.sm {
+  width: 26px;
+  height: 13px;
+}
+.gun-chip.withicon {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .gun-chip {
   border: 2.5px solid var(--ink);
   border-radius: 9px;

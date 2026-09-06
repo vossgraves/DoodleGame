@@ -204,6 +204,23 @@ void main() {
 }
 `;
 
+export type Quality = "low" | "medium" | "high" | "ultra";
+
+/**
+ * `pr` caps the pixel ratio, which is what decides how crisp the ink lines are —
+ * the old hardcoded 1.25 on touch meant a DPR-3 phone drew at ~40% of native and
+ * everything looked soft. `fx` scales particle counts for the same reason in
+ * reverse: cheap devices should not be pushing thousands of quads.
+ */
+export const QUALITY: Record<Quality, { pr: number; fx: number }> = {
+  low: { pr: 0.7, fx: 0.35 },
+  medium: { pr: 1.25, fx: 0.7 },
+  high: { pr: 2.0, fx: 1 },
+  ultra: { pr: 3.0, fx: 1.4 },
+};
+
+export const isQuality = (v: unknown): v is Quality => typeof v === "string" && v in QUALITY;
+
 export class InkRenderer {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -215,15 +232,20 @@ export class InkRenderer {
   private _hurt = 0;
   private _flash = 0;
   night = 0;
+  quality: Quality = "high";
+  private lastW = 1;
+  private lastH = 1;
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, quality: Quality = "high") {
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: false,
       alpha: false,
       powerPreference: "high-performance",
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, "ontouchstart" in window ? 1.25 : 1.75));
+    this.quality = quality;
+    // never supersample past the panel's own pixels
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[quality].pr));
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.autoClear = true;
 
@@ -270,7 +292,17 @@ export class InkRenderer {
     this.postScene.add(quad);
   }
 
+  /** Change quality without rebuilding the renderer. */
+  setQuality(q: Quality) {
+    if (!isQuality(q) || q === this.quality) return;
+    this.quality = q;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[q].pr));
+    this.resize(this.lastW, this.lastH);
+  }
+
   resize(w: number, h: number) {
+    this.lastW = w;
+    this.lastH = h;
     const pr = this.renderer.getPixelRatio();
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;

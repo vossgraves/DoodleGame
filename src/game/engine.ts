@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { InkRenderer, INK } from "./renderer";
+import { InkRenderer, INK, QUALITY, isQuality, type Quality } from "./renderer";
 import { World } from "./physics";
 import { Input } from "./input";
 import { AudioSys } from "./audio";
@@ -35,7 +35,7 @@ export interface HudSnap {
   score: number;
   combo: number;
   nades: number;
-  slots: { name: string; ammo: string; active: boolean; empty: boolean }[];
+  slots: { name: string; kind: string; ammo: string; active: boolean; empty: boolean }[];
   spread: number;
   ads: boolean;
   katana: boolean;
@@ -129,6 +129,13 @@ export class Game {
   onNet: (() => void) | null = null;
   match!: MatchNet;
   zoneView!: ZoneView;
+
+  /** Apply a graphics preset to a running game. */
+  setQuality(q: Quality) {
+    this.R.setQuality(q);
+    this.combat.fx = QUALITY[q].fx;
+    this.onResize();
+  }
   private raf = 0;
   private last = 0;
   private msgT = 0;
@@ -142,7 +149,9 @@ export class Game {
     this.canvas = canvas;
     this.mode = mode;
     this.mapKey = mapKey;
-    this.R = new InkRenderer(canvas);
+    const saved = localStorage.getItem("doodle_quality");
+    const quality: Quality = isQuality(saved) ? saved : "high";
+    this.R = new InkRenderer(canvas, quality);
     this.R.night = mode === "zombies" ? 1 : 0;
     this.input = new Input(canvas);
     this.best = Number(localStorage.getItem(mode === "zombies" ? "doodle_zbest" : "doodle_best") || 0);
@@ -154,6 +163,7 @@ export class Game {
     };
     this.combat.hitInk = readInk("doodle_hit_ink", INK.RED);
     this.combat.tracerInk = readInk("doodle_tracer_ink", INK.ORANGE);
+    this.combat.fx = QUALITY[quality].fx;
     this.player = new Player({
       world: this.world,
       input: this.input,
@@ -511,6 +521,7 @@ export class Game {
     this.hud.nades = this.player.grenades;
     this.hud.slots = this.player.weapons.map((w, i) => ({
       name: w.def.name,
+      kind: w.def.kind,
       ammo: w.def.isGun ? `${w.mag}/${w.reserve}` : "slash",
       active: i === this.player.weaponIndex,
       empty: w.def.isGun && w.mag <= 0 && w.reserve <= 0,

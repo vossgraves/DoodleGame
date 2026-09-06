@@ -341,10 +341,14 @@ export class Combat {
     return m;
   }
 
+  /** particle budget multiplier, driven by the graphics setting */
+  fx = 1;
+
   burst(pos: THREE.Vector3, ink: number, n = 10, speed = 6) {
     // cached: this used to build a fresh shader on every single hit
     const mat = this.burstMat(ink);
-    for (let i = 0; i < n; i++) {
+    const count = Math.max(1, Math.round(n * this.fx));
+    for (let i = 0; i < count; i++) {
       const m = new THREE.Mesh(this.pGeo, mat);
       m.position.copy(pos);
       this.scene.add(m);
