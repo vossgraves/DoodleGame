@@ -8,6 +8,8 @@ import { ZoneView } from "./zone";
 
 /** how long a fallen player's kit stays on the ground */
 const DROP_LIFE = 30;
+/** seconds after respawning during which the loadout can still be changed */
+const RESPAWN_SWAP = 5;
 import { Player, WEAPONS, type Weapon, type WeaponKind } from "./player";
 import { MatchNet } from "./match";
 import { encodeLocal } from "./remote";
@@ -58,6 +60,8 @@ export interface HudSnap {
   modifier: string;
   focusFrac: number;
   focusReady: boolean;
+  /** the brief post-respawn window where the kit can still be swapped */
+  canSwap: boolean;
 }
 
 const defaultHud = (): HudSnap => ({
@@ -96,6 +100,7 @@ const defaultHud = (): HudSnap => ({
   modifier: "",
   focusFrac: 0,
   focusReady: false,
+  canSwap: false,
 });
 
 export class Game {
@@ -121,6 +126,7 @@ export class Game {
   spawnT = 0;
   maxAlive = 8;
   hitstopT = 0;
+  swapWindow = 0;
   best: number;
   hud: HudSnap = defaultHud();
   onHud: ((h: HudSnap) => void) | null = null;
@@ -129,6 +135,16 @@ export class Game {
   onNet: (() => void) | null = null;
   match!: MatchNet;
   zoneView!: ZoneView;
+
+  /**
+   * Swap kit during the post-respawn window. Guarded here rather than in the UI
+   * so holding the menu open past the window does not become a free re-arm.
+   */
+  applyLoadout(kinds: WeaponKind[]): boolean {
+    if (this.swapWindow <= 0 || this.player.spentResource || !this.player.alive) return false;
+    this.player.setLoadout(kinds);
+    return true;
+  }
 
   /** Apply a graphics preset to a running game. */
   setQuality(q: Quality) {
@@ -203,6 +219,7 @@ export class Game {
       respawn: (pos) => {
         this.player.reset(pos);
         this.state = "playing";
+        this.swapWindow = RESPAWN_SWAP;
         this.onState?.("playing");
       },
       spawnPoints: () => this.level.spawns,
@@ -467,6 +484,7 @@ export class Game {
 
       this.comboT -= dt;
       if (this.comboT <= 0) this.combo = 0;
+      if (this.swapWindow > 0) this.swapWindow -= dt;
 
       if (this.state === "playing" && this.player.alive && this.mode !== "arena") {
         this.spawnT -= dt;
@@ -529,6 +547,9 @@ export class Game {
     this.hud.spread = 8 + wpn.spreadCur * 180;
     this.hud.ads = this.player.aiming;
     this.hud.melee = !wpn.def.isGun;
+    // spending anything — a bullet, a grenade, a swing — closes the window
+    this.hud.canSwap =
+      this.match.inMatch && this.player.alive && this.swapWindow > 0 && !this.player.spentResource;
     this.hud.boss = boss ? { name: boss.def.name, frac: clamp(boss.hp / boss.maxHp, 0, 1) } : null;
     this.hud.low = this.player.hp / this.player.maxHp < 0.3;
     this.hud.kills = this.kills;

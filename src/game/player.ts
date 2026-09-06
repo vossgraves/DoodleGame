@@ -628,6 +628,8 @@ export class Player {
   rig = new THREE.Group();
   lookDelta = new THREE.Vector2();
   meleeStreak = 0;
+  /** true once this life has fired, thrown or swung — closes the loadout window */
+  spentResource = false;
   private lastGround = true;
 
   constructor(hooks: PlayerHooks) {
@@ -662,6 +664,7 @@ export class Player {
     this.dashCd = 0;
     this.airJumps = 1;
     this.meleeStreak = 0;
+    this.spentResource = false;
     for (const w of this.weapons) {
       if (w.def.isGun) {
         w.mag = w.def.magSize;
@@ -686,6 +689,28 @@ export class Player {
 
   nextWeapon(dir: number) {
     this.switchTo((this.weaponIndex + dir + this.weapons.length) % this.weapons.length);
+  }
+
+  private clearWeapons() {
+    for (const w of this.weapons) {
+      w.unequip();
+      this.rig.remove(w.root);
+      w.root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+      });
+    }
+  }
+
+  /** Swap the whole kit — used by the brief window after a respawn. */
+  setLoadout(kinds: WeaponKind[]) {
+    this.clearWeapons();
+    this.weapons = sanitizeLoadout(kinds).map((k) => new Weapon(k));
+    for (const w of this.weapons) this.rig.add(w.root);
+    this.weaponIndex = 0;
+    this.weapon = this.weapons[0];
+    this.weapon.equip();
+    this.hooks.audio.switchWeapon();
   }
 
   /**
@@ -904,6 +929,7 @@ export class Player {
     if (!this.weapon.def.isGun) {
       if (firePress && canFire && !this.weapon.blocking) {
         this.weapon.fireT = this.weapon.def.interval;
+        this.spentResource = true;
         this.weapon.slashT = 0.22;
         this.hooks.audio.blade();
         this.recoilP.kick(this.weapon.def.camKick[0] * 20);
@@ -957,6 +983,7 @@ export class Player {
 
   private shoot() {
     const w = this.weapon;
+    this.spentResource = true;
     w.mag -= 1;
     w.fireT = w.def.interval;
     if (w.def.cycleDur) w.cycleT = w.def.cycleDur;
@@ -997,6 +1024,7 @@ export class Player {
       return;
     }
     this.grenades -= 1;
+    this.spentResource = true;
     this.nadeCd = 0.6;
     this.hooks.audio.nade();
     this.hooks.onNade(this.eye.clone(), this.forward.clone(), this.nadeCharge);

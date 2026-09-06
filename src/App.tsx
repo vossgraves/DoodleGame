@@ -72,6 +72,7 @@ const emptyHud = (): HudSnap => ({
   modifier: "",
   focusFrac: 0,
   focusReady: false,
+  canSwap: false,
 });
 
 function isTouchDevice() {
@@ -89,6 +90,7 @@ export default function App() {
   const [matchMode, setMatchMode] = useState<MatchMode>("ffa");
   // MatchNet lives outside React; bump this to re-read it
   const [netTick, setNetTick] = useState(0);
+  const [swapping, setSwapping] = useState(false);
   const [me, setMe] = useState<account.Account | null>(null);
   const [stats, setStats] = useState<account.Stats | null>(null);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
@@ -108,10 +110,19 @@ export default function App() {
   const [runId, setRunId] = useState(0);
   const [locked, setLocked] = useState(false);
   const hudLatest = useRef(hud);
+  // Read through a ref when building the Game. If `loadout` were a dependency of
+  // that effect, swapping kit mid-match would tear the whole match down.
+  const loadoutRef = useRef(loadout);
+  loadoutRef.current = loadout;
 
   useEffect(() => {
     setTouch(isTouchDevice());
   }, []);
+
+  // the window can lapse while the menu is open; do not leave it stranded
+  useEffect(() => {
+    if (swapping && !hud.canSwap) setSwapping(false);
+  }, [swapping, hud.canSwap]);
 
   // the hitmarker is CSS, so the chosen hit colour rides in as a variable
   useEffect(() => {
@@ -162,7 +173,7 @@ export default function App() {
     if (screen !== "game") return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const g = new Game(canvas, mode, mapKey, loadout);
+    const g = new Game(canvas, mode, mapKey, loadoutRef.current);
     gameRef.current = g;
     g.onHud = (h) => {
       hudLatest.current = h;
@@ -185,7 +196,7 @@ export default function App() {
       g.dispose();
       if (gameRef.current === g) gameRef.current = null;
     };
-  }, [screen, mode, mapKey, loadout, runId]);
+  }, [screen, mode, mapKey, playerName, matchMode, runId]);
 
   useEffect(() => {
     const onVis = () => {
@@ -316,6 +327,26 @@ export default function App() {
             </div>
           )}
           {touch && gstate === "playing" && <TouchControls gameRef={gameRef} />}
+          {hud.canSwap && !swapping && (
+            <button className="swap-btn" onClick={() => setSwapping(true)} aria-label="change loadout">
+              <span>⋯</span>
+              <em>loadout</em>
+            </button>
+          )}
+          {swapping && (
+            <div className="absolute inset-0 z-40">
+              <LoadoutScreen
+                loadout={loadout}
+                onChange={(l) => {
+                  setLoadout(l);
+                  localStorage.setItem("doodle_loadout", JSON.stringify(l));
+                  account.saveProfileSoon(l);
+                  gameRef.current?.applyLoadout(l);
+                }}
+                onBack={() => setSwapping(false)}
+              />
+            </div>
+          )}
           {mode === "arena" && (
             <Online
               gameRef={gameRef}
