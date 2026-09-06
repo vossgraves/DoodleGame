@@ -1,0 +1,670 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #1a30c0;
+  --red: #d02030;
+  --paper: #f6f3e6;
+  --green: #1e8a42;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  font-family: "Patrick Hand", "Caveat", "Comic Sans MS", cursive;
+  color: var(--ink);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+canvas.game-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.paper-bg {
+  background-color: var(--paper);
+  background-image:
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent 27px,
+      rgba(26, 48, 192, 0.09) 28px
+    ),
+    linear-gradient(to right, transparent 0, transparent 46px, rgba(208, 32, 48, 0.35) 46px, rgba(208, 32, 48, 0.35) 48px, transparent 48px);
+}
+
+.ink-panel {
+  background: rgba(250, 248, 238, 0.94);
+  border: 3px solid var(--ink);
+  border-radius: 14px 20px 12px 18px / 18px 12px 20px 14px;
+  box-shadow: 7px 7px 0 rgba(26, 48, 192, 0.14);
+  transform: rotate(-0.5deg);
+}
+
+.ink-btn {
+  font-family: inherit;
+  border: 3px solid var(--ink);
+  background: rgba(246, 243, 230, 0.9);
+  color: var(--ink);
+  border-radius: 12px 16px 10px 14px / 14px 10px 16px 12px;
+  padding: 10px 22px;
+  font-size: 26px;
+  line-height: 1.1;
+  cursor: pointer;
+  transform: rotate(-0.6deg);
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.ink-btn:hover,
+.ink-btn:active {
+  transform: rotate(0.8deg) scale(1.03);
+  background: #fff;
+}
+.ink-btn.red {
+  border-color: var(--red);
+  color: var(--red);
+}
+.ink-btn.green {
+  border-color: var(--green);
+  color: var(--green);
+}
+.ink-btn.big {
+  font-size: 34px;
+  padding: 16px 28px;
+  min-width: 220px;
+}
+
+.hud-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: var(--ink);
+  overflow: hidden;
+}
+.hud-root.playing .hud-bit {
+  mix-blend-mode: multiply;
+}
+
+.hud-tl {
+  position: absolute;
+  left: 8%;
+  top: 3%;
+  font-size: 28px;
+  transform: rotate(-1.5deg);
+}
+.hud-tr {
+  position: absolute;
+  right: 4%;
+  top: 3%;
+  text-align: right;
+  font-size: 28px;
+  transform: rotate(1deg);
+}
+.hud-bl {
+  position: absolute;
+  left: 8%;
+  bottom: 5%;
+}
+.hud-br {
+  position: absolute;
+  right: 4%;
+  bottom: 5%;
+  text-align: right;
+}
+
+.bar {
+  width: 210px;
+  height: 16px;
+  border: 2.5px solid var(--ink);
+  border-radius: 6px 8px 5px 7px / 8px 5px 7px 6px;
+  overflow: hidden;
+  transform: rotate(-1deg);
+}
+.fill {
+  height: 100%;
+  width: 100%;
+  background: repeating-linear-gradient(-55deg, var(--ink) 0 2.5px, transparent 2.5px 6px);
+  transition: width 0.15s;
+}
+.low .bar {
+  border-color: var(--red);
+}
+.low .fill {
+  background: repeating-linear-gradient(-55deg, var(--red) 0 2.5px, transparent 2.5px 6px);
+}
+
+.ammo b {
+  font-size: 56px;
+  line-height: 1;
+}
+.ammo span {
+  font-size: 26px;
+  opacity: 0.8;
+}
+.tally {
+  display: flex;
+  flex-wrap: wrap;
+  width: 240px;
+  gap: 3px;
+  margin-top: -4px;
+}
+.tally i {
+  display: block;
+  width: 4px;
+  height: 18px;
+  background: var(--ink);
+  transform: rotate(4deg);
+  border-radius: 2px;
+}
+.tally i:nth-child(5n) {
+  margin-right: 8px;
+  transform: rotate(-8deg);
+}
+
+.crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  --s: 10px;
+  filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.9));
+}
+.crosshair i {
+  position: absolute;
+  background: var(--red);
+  border-radius: 2px;
+}
+.ch-t {
+  width: 3px;
+  height: 12px;
+  left: -1.5px;
+  top: calc(-1 * var(--s) - 12px);
+}
+.ch-b {
+  width: 3px;
+  height: 12px;
+  left: -1.5px;
+  top: var(--s);
+}
+.ch-l {
+  width: 12px;
+  height: 3px;
+  top: -1.5px;
+  left: calc(-1 * var(--s) - 12px);
+}
+.ch-r {
+  width: 12px;
+  height: 3px;
+  top: -1.5px;
+  left: var(--s);
+}
+.ch-dot {
+  width: 3px;
+  height: 3px;
+  left: -1.5px;
+  top: -1.5px;
+  border-radius: 50%;
+}
+.crosshair.katana i {
+  background: var(--ink);
+}
+.crosshair.katana .ch-l,
+.crosshair.katana .ch-r {
+  display: none;
+}
+.crosshair.ads {
+  opacity: 0;
+}
+
+.scope {
+  position: absolute;
+  inset: 0;
+  display: none;
+  pointer-events: none;
+}
+.scope.on {
+  display: block;
+}
+.scope .mask {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, transparent 18%, rgba(18, 22, 40, 0.78) 28%);
+}
+.scope .ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 220px;
+  height: 220px;
+  margin: -110px;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+}
+.scope .cx,
+.scope .cy {
+  position: absolute;
+  background: var(--red);
+}
+.scope .cx {
+  left: 50%;
+  top: 18%;
+  width: 2px;
+  height: 64%;
+}
+.scope .cy {
+  top: 50%;
+  left: 18%;
+  height: 2px;
+  width: 64%;
+}
+
+.hitmarker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  opacity: 0;
+}
+.hitmarker i {
+  position: absolute;
+  width: 2.5px;
+  height: 28px;
+  background: var(--ink);
+  left: -1.25px;
+  top: -14px;
+}
+.hitmarker i:first-child {
+  transform: rotate(45deg);
+}
+.hitmarker i:last-child {
+  transform: rotate(-45deg);
+}
+.hitmarker.show {
+  animation: hm 0.2s ease-out;
+}
+.hitmarker.kill i {
+  background: var(--red);
+  height: 38px;
+  top: -19px;
+}
+@keyframes hm {
+  0% {
+    opacity: 1;
+    transform: scale(1.5);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+.msg-main {
+  font-size: 84px;
+  transform: rotate(-2deg);
+  letter-spacing: 3px;
+  line-height: 1;
+  text-align: center;
+}
+.msg-main.show {
+  animation: scribble 0.55s ease-out forwards;
+}
+@keyframes scribble {
+  0% {
+    opacity: 0;
+    transform: rotate(-7deg) scale(1.7);
+    filter: blur(3px);
+  }
+  55% {
+    opacity: 1;
+    transform: rotate(-1deg) scale(0.95);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: rotate(-2deg) scale(1);
+  }
+}
+.msg-sub {
+  font-size: 30px;
+  opacity: 0.85;
+  text-align: center;
+}
+
+.killfeed {
+  position: absolute;
+  right: 4%;
+  top: 26%;
+  text-align: right;
+  font-size: 24px;
+}
+.killfeed div {
+  animation: kf 1.7s ease-out forwards;
+}
+.killfeed .pts {
+  color: var(--red);
+}
+@keyframes kf {
+  0% {
+    opacity: 0;
+    transform: translateX(30px) rotate(3deg);
+  }
+  15% {
+    opacity: 1;
+    transform: none;
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.dmg-ind i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 28px;
+  height: 20px;
+  margin-left: -14px;
+  margin-top: -150px;
+  transform-origin: 14px 150px;
+  background: var(--red);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  animation: di 0.9s linear forwards;
+}
+@keyframes di {
+  to {
+    opacity: 0;
+  }
+}
+
+.bossbar {
+  position: absolute;
+  left: 50%;
+  top: 7%;
+  width: 420px;
+  margin-left: -210px;
+  text-align: center;
+  font-size: 24px;
+}
+.bar.big {
+  width: 420px;
+  height: 18px;
+  margin: 4px auto 0;
+}
+.fill.red {
+  background: repeating-linear-gradient(-55deg, var(--red) 0 3px, transparent 3px 7px);
+}
+
+.nades i {
+  display: inline-block;
+  width: 10px;
+  height: 16px;
+  border: 2px solid var(--ink);
+  border-radius: 4px 4px 6px 6px;
+  margin-right: 4px;
+  transform: rotate(-8deg);
+}
+
+.slot {
+  opacity: 0.5;
+  font-size: 18px;
+}
+.slot.active {
+  opacity: 1;
+  font-size: 22px;
+  border-bottom: 2px solid var(--ink);
+}
+.slot.empty {
+  color: var(--red);
+}
+
+.focus-meter {
+  position: absolute;
+  right: 7%;
+  bottom: 28%;
+  width: 18px;
+  display: none;
+}
+.focus-meter.on {
+  display: block;
+}
+.fm-tube {
+  height: 90px;
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+  overflow: hidden;
+  position: relative;
+}
+.fm-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(-55deg, var(--red) 0 2px, transparent 2px 5px);
+}
+.focus-meter.ready .fm-fill {
+  background: repeating-linear-gradient(-55deg, var(--ink) 0 2px, transparent 2px 5px);
+}
+
+.blink {
+  animation: blink 1.2s infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.touch-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+.touch-layer > * {
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.joy-base {
+  position: absolute;
+  left: calc(28px + env(safe-area-inset-left));
+  bottom: calc(36px + env(safe-area-inset-bottom));
+  width: 132px;
+  height: 132px;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: rgba(246, 243, 230, 0.35);
+}
+.joy-knob {
+  position: absolute;
+  width: 58px;
+  height: 58px;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: rgba(246, 243, 230, 0.75);
+  left: 50%;
+  top: 50%;
+  margin: -29px 0 0 -29px;
+}
+
+.look-pad {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 62%;
+  height: 100%;
+}
+
+.tbtn {
+  position: absolute;
+  border: 3px solid var(--ink);
+  background: rgba(246, 243, 230, 0.62);
+  color: var(--ink);
+  font-family: inherit;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  text-align: center;
+  padding: 0;
+}
+.tbtn:active,
+.tbtn.held {
+  background: rgba(26, 48, 192, 0.18);
+  transform: scale(0.96);
+}
+/* icons never swallow the pointer, so the button always owns the drag */
+.tico {
+  display: block;
+  width: 48%;
+  height: 48%;
+  pointer-events: none;
+}
+.tbtn.fire .tico {
+  width: 54%;
+  height: 54%;
+}
+.tbtn.fire {
+  width: 92px;
+  height: 92px;
+  right: calc(22px + env(safe-area-inset-right));
+  bottom: calc(42px + env(safe-area-inset-bottom));
+  border-color: var(--red);
+  color: var(--red);
+  font-size: 22px;
+}
+.tbtn.jump {
+  width: 64px;
+  height: 64px;
+  right: calc(122px + env(safe-area-inset-right));
+  bottom: calc(48px + env(safe-area-inset-bottom));
+}
+.tbtn.aim {
+  width: 60px;
+  height: 60px;
+  right: calc(28px + env(safe-area-inset-right));
+  bottom: calc(148px + env(safe-area-inset-bottom));
+}
+.tbtn.reload {
+  width: 54px;
+  height: 54px;
+  right: calc(100px + env(safe-area-inset-right));
+  bottom: calc(150px + env(safe-area-inset-bottom));
+}
+.tbtn.sprint {
+  width: 54px;
+  height: 54px;
+  left: calc(168px + env(safe-area-inset-left));
+  bottom: calc(48px + env(safe-area-inset-bottom));
+}
+.tbtn.crouch {
+  width: 50px;
+  height: 50px;
+  left: calc(168px + env(safe-area-inset-left));
+  bottom: calc(110px + env(safe-area-inset-bottom));
+}
+.tbtn.nade {
+  width: 50px;
+  height: 50px;
+  right: calc(178px + env(safe-area-inset-right));
+  bottom: calc(118px + env(safe-area-inset-bottom));
+  border-color: var(--green);
+  color: var(--green);
+}
+.tbtn.wep {
+  width: 48px;
+  height: 48px;
+  right: calc(22px + env(safe-area-inset-right));
+  bottom: calc(214px + env(safe-area-inset-bottom));
+  font-size: 13px;
+}
+.tbtn.pause {
+  width: 44px;
+  height: 44px;
+  right: calc(12px + env(safe-area-inset-right));
+  top: calc(12px + env(safe-area-inset-top));
+  font-size: 18px;
+}
+
+.mode-card {
+  width: 240px;
+  min-height: 210px;
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+.mode-card:hover {
+  transform: rotate(1deg) scale(1.04);
+}
+
+input[type="range"].ink-range {
+  appearance: none;
+  width: 220px;
+  height: 8px;
+  background: repeating-linear-gradient(-55deg, var(--ink) 0 2px, transparent 2px 6px);
+  border: 2px solid var(--ink);
+  border-radius: 8px;
+}
+input[type="range"].ink-range::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--red);
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+@media (max-width: 700px) {
+  .hud-tl,
+  .hud-tr {
+    font-size: 20px;
+  }
+  .ammo b {
+    font-size: 36px;
+  }
+  .msg-main {
+    font-size: 48px;
+  }
+  .bar {
+    width: 140px;
+  }
+  .hud-bl {
+    left: 4%;
+    bottom: 22%;
+  }
+  .hud-br {
+    right: 3%;
+    bottom: 22%;
+  }
+  .tally {
+    display: none;
+  }
+  .bossbar {
+    width: 70%;
+    margin-left: -35%;
+    left: 50%;
+  }
+  .bar.big {
+    width: 100%;
+  }
+  .ink-btn.big {
+    min-width: 0;
+    width: 100%;
+  }
+  .mode-card {
+    width: 100%;
+    min-height: 140px;
+  }
+}

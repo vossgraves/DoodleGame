@@ -1,0 +1,825 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Game, type GameState, type HudSnap } from "./game/engine";
+import type { Mode } from "./game/level";
+
+type Screen = "menu" | "howto" | "settings" | "game";
+
+const emptyHud = (): HudSnap => ({
+  hp: 120,
+  maxHp: 120,
+  mag: "35",
+  reserve: "/140",
+  reloading: false,
+  weapon: "RIFLE",
+  hint: "",
+  wave: 0,
+  left: 0,
+  score: 0,
+  combo: 0,
+  nades: 3,
+  slots: [],
+  spread: 10,
+  ads: false,
+  katana: false,
+  boss: null,
+  message: "",
+  sub: "",
+  tip: "",
+  low: false,
+  kills: 0,
+  time: 0,
+  best: 0,
+  mode: "district",
+  state: "playing",
+  hitmarker: 0,
+  hitKill: false,
+  hitCrit: false,
+  dmgAngle: null,
+  killFeed: [],
+  waveLabel: "WAVE",
+  modifier: "",
+  focusFrac: 0,
+  focusReady: false,
+});
+
+function isTouchDevice() {
+  return "ontouchstart" in window || navigator.maxTouchPoints > 0;
+}
+
+export default function App() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gameRef = useRef<Game | null>(null);
+  const [screen, setScreen] = useState<Screen>("menu");
+  const [mode, setMode] = useState<Mode>("district");
+  const [hud, setHud] = useState<HudSnap>(emptyHud);
+  const [gstate, setGstate] = useState<GameState>("playing");
+  const [touch, setTouch] = useState(false);
+  const [sens, setSens] = useState(Number(localStorage.getItem("doodle_sens") || 100));
+  const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
+  const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
+  const [bestD, setBestD] = useState(Number(localStorage.getItem("doodle_best") || 0));
+  const [bestZ, setBestZ] = useState(Number(localStorage.getItem("doodle_zbest") || 0));
+  const [runId, setRunId] = useState(0);
+  const [locked, setLocked] = useState(false);
+  const hudLatest = useRef(hud);
+
+  useEffect(() => {
+    setTouch(isTouchDevice());
+  }, []);
+
+  const killGame = useCallback(() => {
+    gameRef.current?.dispose();
+    gameRef.current = null;
+  }, []);
+
+  const launch = useCallback((m: Mode) => {
+    setMode(m);
+    setScreen("game");
+    setGstate("playing");
+    setHud(emptyHud());
+    setRunId((n) => n + 1);
+  }, []);
+
+  useEffect(() => {
+    if (screen !== "game") return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const g = new Game(canvas, mode);
+    gameRef.current = g;
+    g.onHud = (h) => {
+      hudLatest.current = h;
+    };
+    g.onState = (s) => setGstate(s);
+    g.input.onLockChange = (l) => setLocked(l);
+    g.start();
+    const id = window.setInterval(() => setHud({ ...hudLatest.current }), 50);
+    return () => {
+      clearInterval(id);
+      g.dispose();
+      if (gameRef.current === g) gameRef.current = null;
+    };
+  }, [screen, mode, runId]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.hidden && screen === "game") gameRef.current?.pause();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [screen]);
+
+  const toMenu = () => {
+    killGame();
+    setBestD(Number(localStorage.getItem("doodle_best") || 0));
+    setBestZ(Number(localStorage.getItem("doodle_zbest") || 0));
+    setScreen("menu");
+  };
+
+  return (
+    <div className="relative h-full w-full overflow-hidden paper-bg">
+      <canvas
+        ref={canvasRef}
+        className="game-canvas"
+        style={{ visibility: screen === "game" ? "visible" : "hidden" }}
+        onClick={() => {
+          if (gstate === "playing") gameRef.current?.input.requestLock();
+        }}
+      />
+
+      {screen === "menu" && (
+        <Menu
+          bestD={bestD}
+          bestZ={bestZ}
+          onDistrict={() => launch("district")}
+          onZombies={() => launch("zombies")}
+          onHow={() => setScreen("howto")}
+          onSettings={() => setScreen("settings")}
+        />
+      )}
+      {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touch} />}
+      {screen === "settings" && (
+        <Settings
+          sens={sens}
+          invert={invert}
+          music={music}
+          onSens={(v) => {
+            setSens(v);
+            localStorage.setItem("doodle_sens", String(v));
+          }}
+          onInvert={(v) => {
+            setInvert(v);
+            localStorage.setItem("doodle_invert", v ? "1" : "0");
+          }}
+          onMusic={(v) => {
+            setMusic(v);
+            localStorage.setItem("doodle_music", v ? "1" : "0");
+          }}
+          onBack={() => setScreen("menu")}
+        />
+      )}
+
+      {screen === "game" && (
+        <>
+          <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} />
+          {!touch && gstate === "playing" && !locked && (
+            <div
+              className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(246,243,230,0.35)]"
+              onClick={() => gameRef.current?.input.requestLock()}
+            >
+              <div className="ink-panel px-10 py-6 text-center text-3xl blink">click to scribble</div>
+            </div>
+          )}
+          {touch && gstate === "playing" && <TouchControls gameRef={gameRef} />}
+          {gstate === "paused" && (
+            <PauseOverlay
+              onResume={() => gameRef.current?.resume()}
+              onMenu={toMenu}
+            />
+          )}
+          {gstate === "dead" && (
+            <DeadOverlay
+              hud={hud}
+              onRetry={() => launch(mode)}
+              onMenu={toMenu}
+            />
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function Menu({
+  bestD,
+  bestZ,
+  onDistrict,
+  onZombies,
+  onHow,
+  onSettings,
+}: {
+  bestD: number;
+  bestZ: number;
+  onDistrict: () => void;
+  onZombies: () => void;
+  onHow: () => void;
+  onSettings: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
+      <DoodleDecor />
+      <div className="ink-panel relative z-10 w-full max-w-[920px] px-6 py-8 text-center sm:px-12">
+        <p className="mb-1 text-2xl opacity-70" style={{ transform: "rotate(1deg)" }}>
+          ballpoint FPS · lined paper
+        </p>
+        <h1
+          className="m-0 font-[Caveat,cursive] text-[64px] leading-[0.9] tracking-wide sm:text-[92px]"
+          style={{ transform: "rotate(-1.5deg)" }}
+        >
+          DOODLE DISTRICT
+        </h1>
+        <p className="mt-2 text-xl opacity-80">erase them before they ink the page</p>
+
+        <div className="mt-8 flex flex-col items-stretch justify-center gap-4 sm:flex-row sm:items-stretch">
+          <button className="ink-panel mode-card p-5 text-left" onClick={onDistrict}>
+            <div className="text-sm opacity-70">WAVE SURVIVAL</div>
+            <div className="font-[Caveat,cursive] text-4xl">DISTRICT</div>
+            <p className="mt-2 text-lg leading-snug opacity-80">
+              doodle goons, rooftops, rifles and a katana. clear waves. don&apos;t get sketched out.
+            </p>
+            <div className="mt-3 text-lg">
+              best <b className="text-[var(--red)]">{bestD}</b>
+            </div>
+          </button>
+          <button className="ink-panel mode-card p-5 text-left" onClick={onZombies} style={{ transform: "rotate(0.8deg)" }}>
+            <div className="text-sm text-[var(--red)]">ENDLESS HORDES</div>
+            <div className="font-[Caveat,cursive] text-4xl text-[var(--red)]">ZOMBIES</div>
+            <p className="mt-2 text-lg leading-snug opacity-80">
+              the margin bleeds. shamblers, runners, tanks. they never stop coming. keep moving.
+            </p>
+            <div className="mt-3 text-lg">
+              best <b className="text-[var(--red)]">{bestZ}</b>
+            </div>
+          </button>
+        </div>
+
+        <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
+          <button className="ink-btn" onClick={onHow}>
+            how to play
+          </button>
+          <button className="ink-btn" onClick={onSettings}>
+            settings
+          </button>
+        </div>
+        <p className="mt-5 text-base opacity-60">click a card to scribble yourself in</p>
+      </div>
+    </div>
+  );
+}
+
+function DoodleDecor() {
+  return (
+    <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-40" viewBox="0 0 1200 800" fill="none">
+      <g stroke="#1a30c0" strokeWidth="2.4" strokeLinecap="round">
+        <circle cx="140" cy="160" r="38" />
+        <line x1="140" y1="198" x2="140" y2="280" />
+        <line x1="140" y1="230" x2="100" y2="250" />
+        <line x1="140" y1="230" x2="190" y2="210" />
+        <line x1="140" y1="280" x2="112" y2="340" />
+        <line x1="140" y1="280" x2="172" y2="340" />
+        <rect x="186" y="204" width="54" height="16" rx="3" transform="rotate(-12 186 204)" />
+        <circle cx="128" cy="152" r="4" fill="#1a30c0" />
+        <circle cx="152" cy="152" r="4" fill="#1a30c0" />
+        <path d="M128 172 Q140 182 154 170" />
+      </g>
+      <g stroke="#d02030" strokeWidth="2.2" strokeLinecap="round">
+        <circle cx="1060" cy="520" r="42" />
+        <line x1="1060" y1="562" x2="1060" y2="650" />
+        <line x1="1060" y1="590" x2="1010" y2="630" />
+        <line x1="1060" y1="590" x2="1115" y2="630" />
+        <line x1="1060" y1="650" x2="1034" y2="720" />
+        <line x1="1060" y1="650" x2="1090" y2="720" />
+        <line x1="1046" cy="512" x2="1052" y2="528" />
+        <line x1="1052" y1="512" x2="1046" y2="528" />
+        <line x1="1070" y1="512" x2="1076" y2="528" />
+        <line x1="1076" y1="512" x2="1070" y2="528" />
+        <path d="M1046 542 Q1060 534 1076 544" />
+      </g>
+      <g stroke="#1a30c0" strokeWidth="1.6" opacity="0.5">
+        <path d="M80 60 q40 20 80 0" />
+        <path d="M900 80 q60 -30 120 10" />
+        <path d="M200 700 q100 40 220 0" />
+      </g>
+    </svg>
+  );
+}
+
+function HowTo({ onBack, touch }: { onBack: () => void; touch: boolean }) {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
+      <div className="ink-panel w-full max-w-[760px] px-8 py-7 text-left">
+        <h2 className="m-0 text-center font-[Caveat,cursive] text-5xl">how to scribble</h2>
+        <div className="mt-5 grid gap-6 text-xl sm:grid-cols-2">
+          <div>
+            <div className="mb-1 border-b-2 border-[var(--ink)] text-2xl">move</div>
+            {touch ? (
+              <p>left stick walks. drag the right side of the screen to look around. JUMP and SPRINT sit near the stick.</p>
+            ) : (
+              <p>
+                <b>WASD</b> walk · <b>mouse</b> look · <b>Shift</b> sprint · <b>Space</b> jump · <b>C</b> crouch / slide
+              </p>
+            )}
+          </div>
+          <div>
+            <div className="mb-1 border-b-2 border-[var(--ink)] text-2xl">shoot</div>
+            {touch ? (
+              <p>
+                hold the red target to fire — and slide that same thumb to keep aiming, no second finger needed. the
+                scope tightens the shot, the arrow reloads, the pistol cycles guns.
+              </p>
+            ) : (
+              <p>
+                <b>click</b> fire · <b>right mouse</b> aim · <b>R</b> reload · <b>1–4</b> weapons · <b>G</b> grenade · <b>X</b> dash
+              </p>
+            )}
+          </div>
+          <div>
+            <div className="mb-1 border-b-2 border-[var(--ink)] text-2xl">district</div>
+            <p>waves of doodle goons. grunts shoot, rushers lunge, heavies soak ink, snipers lurk on roofs. a boss doodles in every five waves.</p>
+          </div>
+          <div>
+            <div className="mb-1 border-b-2 border-[var(--red)] text-2xl text-[var(--red)]">zombies</div>
+            <p>they do not stop. headshots erase faster. tanks shrug off pellets. spitters paint the page. ammo drops from the fallen.</p>
+          </div>
+        </div>
+        <p className="mt-5 text-center text-lg opacity-80">katana (slot 4) slashes. hold aim to guard. three kills charge a focus dash.</p>
+        <div className="mt-6 text-center">
+          <button className="ink-btn" onClick={onBack}>
+            back
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Settings({
+  sens,
+  invert,
+  music,
+  onSens,
+  onInvert,
+  onMusic,
+  onBack,
+}: {
+  sens: number;
+  invert: boolean;
+  music: boolean;
+  onSens: (n: number) => void;
+  onInvert: (v: boolean) => void;
+  onMusic: (v: boolean) => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center p-4 paper-bg">
+      <div className="ink-panel w-full max-w-[520px] px-8 py-7 text-center">
+        <h2 className="m-0 font-[Caveat,cursive] text-5xl">settings</h2>
+        <div className="mt-6 flex flex-col items-center gap-5 text-2xl">
+          <label className="flex flex-col items-center gap-2">
+            look sensitivity {sens}%
+            <input className="ink-range" type="range" min={40} max={200} value={sens} onChange={(e) => onSens(Number(e.target.value))} />
+          </label>
+          <label className="flex items-center gap-3">
+            <input type="checkbox" checked={invert} onChange={(e) => onInvert(e.target.checked)} />
+            invert look y
+          </label>
+          <label className="flex items-center gap-3">
+            <input type="checkbox" checked={music} onChange={(e) => onMusic(e.target.checked)} />
+            doodle tune
+          </label>
+        </div>
+        <button className="ink-btn mt-8" onClick={onBack}>
+          back
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function HUD({ hud, hidden }: { hud: HudSnap; hidden: boolean }) {
+  const magN = Number(hud.mag);
+  const ticks = Number.isFinite(magN) ? Math.min(magN, 40) : 0;
+  if (hidden) return null;
+  return (
+    <div className={`hud-root playing ${hud.low ? "low" : ""}`}>
+      <div className={`scope ${hud.ads && hud.weapon === "SNIPER" ? "on" : ""}`}>
+        <div className="mask" />
+        <div className="ring" />
+        <div className="cx" />
+        <div className="cy" />
+      </div>
+      <div
+        className={`crosshair ${hud.katana ? "katana" : ""} ${hud.ads ? "ads" : ""}`}
+        style={{ ["--s" as string]: `${hud.spread}px` }}
+      >
+        <i className="ch-t" />
+        <i className="ch-b" />
+        <i className="ch-l" />
+        <i className="ch-r" />
+        <i className="ch-dot" />
+      </div>
+      <div key={hud.hitmarker} className={`hitmarker show ${hud.hitKill ? "kill" : ""} ${hud.hitCrit ? "crit" : ""}`}>
+        <i />
+        <i />
+      </div>
+      {hud.dmgAngle != null && (
+        <div className="dmg-ind" key={hud.hp}>
+          <i style={{ transform: `rotate(${(hud.dmgAngle * 180) / Math.PI}deg)` }} />
+        </div>
+      )}
+
+      <div className="hud-tl hud-bit">
+        <div>
+          SCORE <b>{hud.score}</b>
+        </div>
+        <div className="text-[var(--red)]">{hud.combo > 1 ? `combo x${hud.combo}` : ""}</div>
+      </div>
+      <div className="hud-tr hud-bit">
+        <div>
+          {hud.waveLabel} <b>{hud.wave}</b>
+        </div>
+        <div className="text-[var(--red)]">{hud.modifier}</div>
+        <div>
+          <b>{hud.left}</b> {hud.mode === "zombies" ? "undead" : "enemies"} left
+        </div>
+      </div>
+
+      {hud.boss && (
+        <div className="bossbar hud-bit">
+          <div>{hud.boss.name}</div>
+          <div className="bar big">
+            <div className="fill red" style={{ width: `${hud.boss.frac * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      <div className="hud-bl hud-bit">
+        <div className="mb-2 flex items-center gap-2 text-2xl">
+          <span>HP</span>
+          <div className="bar">
+            <div className="fill" style={{ width: `${(hud.hp / hud.maxHp) * 100}%` }} />
+          </div>
+          <span>{Math.ceil(hud.hp)}</span>
+        </div>
+        <div className="ammo">
+          <b>{hud.mag}</b>
+          <span>{hud.reserve}</span>
+          {hud.reloading && <span className="ml-2 text-[var(--red)]">reloading…</span>}
+          <span className="nades ml-3">
+            {Array.from({ length: hud.nades }).map((_, i) => (
+              <i key={i} />
+            ))}
+          </span>
+        </div>
+        <div className="tally">
+          {Array.from({ length: ticks }).map((_, i) => (
+            <i key={i} />
+          ))}
+        </div>
+      </div>
+      <div className="hud-br hud-bit">
+        <div className="mb-1 flex flex-col items-end">
+          {hud.slots.map((s, i) => (
+            <div key={s.name} className={`slot ${s.active ? "active" : ""} ${s.empty ? "empty" : ""}`}>
+              {i + 1} {s.name} <span className="text-base opacity-70">{s.ammo}</span>
+            </div>
+          ))}
+        </div>
+        <div className="text-3xl">{hud.weapon}</div>
+        <div className="text-lg opacity-70">{hud.hint}</div>
+      </div>
+
+      <div className={`focus-meter hud-bit ${hud.katana ? "on" : ""} ${hud.focusReady ? "ready" : ""}`}>
+        <div className="text-[10px] tracking-widest">KATANA</div>
+        <div className="fm-tube">
+          <div className="fm-fill" style={{ height: `${hud.focusFrac * 100}%` }} />
+        </div>
+      </div>
+
+      <div className="absolute left-0 right-0 top-[22%] pointer-events-none">
+        {hud.message && <div className="msg-main show">{hud.message}</div>}
+        {hud.sub && <div className="msg-sub">{hud.sub}</div>}
+      </div>
+      <div className="absolute bottom-[16%] left-0 right-0 text-center text-2xl hud-bit">{hud.tip}</div>
+      <div className="killfeed hud-bit">
+        {hud.killFeed.map((k) => (
+          <div key={k.id}>
+            {k.text} <span className="pts">+{k.pts}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PauseOverlay({ onResume, onMenu }: { onResume: () => void; onMenu: () => void }) {
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.62)]">
+      <div className="ink-panel px-12 py-8 text-center">
+        <h2 className="m-0 font-[Caveat,cursive] text-6xl">paused</h2>
+        <p className="mt-2 text-xl opacity-80">the doodles are waiting</p>
+        <div className="mt-6 flex flex-col gap-3">
+          <button className="ink-btn big" onClick={onResume}>
+            resume
+          </button>
+          <button className="ink-btn" onClick={onMenu}>
+            menu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeadOverlay({ hud, onRetry, onMenu }: { hud: HudSnap; onRetry: () => void; onMenu: () => void }) {
+  const t = Math.floor(hud.time);
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-[rgba(246,243,230,0.7)]">
+      <div className="ink-panel max-w-[560px] px-10 py-8 text-center">
+        <h2 className="m-0 font-[Caveat,cursive] text-6xl text-[var(--red)]">ERASED</h2>
+        <p className="mt-1 text-2xl">{hud.mode === "zombies" ? "the page is overrun" : "the doodles won"}</p>
+        <div className="mt-5 text-2xl leading-relaxed">
+          <div>
+            score <b className="text-[var(--red)]">{hud.score}</b>
+          </div>
+          <div>
+            {hud.waveLabel.toLowerCase()} <b>{hud.wave}</b> · kills <b>{hud.kills}</b>
+          </div>
+          <div>
+            time <b>
+              {Math.floor(t / 60)}:{(t % 60).toString().padStart(2, "0")}
+            </b>
+          </div>
+          <div className="opacity-70">best {hud.best}</div>
+        </div>
+        <div className="mt-7 flex flex-col gap-3">
+          <button className="ink-btn big red" onClick={onRetry}>
+            scribble again
+          </button>
+          <button className="ink-btn" onClick={onMenu}>
+            menu
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const LOOK_GAIN = 1.8;
+
+const ICONS: Record<string, React.ReactNode> = {
+  fire: (
+    <>
+      <circle cx="12" cy="12" r="6.6" />
+      <line x1="12" y1="1.8" x2="12" y2="4.4" />
+      <line x1="12" y1="19.6" x2="12" y2="22.2" />
+      <line x1="1.8" y1="12" x2="4.4" y2="12" />
+      <line x1="19.6" y1="12" x2="22.2" y2="12" />
+      <circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none" />
+    </>
+  ),
+  aim: (
+    <>
+      <circle cx="12" cy="12" r="6.4" />
+      <line x1="12" y1="2" x2="12" y2="22" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+    </>
+  ),
+  jump: (
+    <>
+      <line x1="12" y1="17.5" x2="12" y2="4.5" />
+      <polyline points="6.6 9.9 12 4.5 17.4 9.9" />
+      <line x1="5" y1="21" x2="19" y2="21" />
+    </>
+  ),
+  crouch: (
+    <>
+      <line x1="12" y1="4" x2="12" y2="16.5" />
+      <polyline points="6.6 11.1 12 16.5 17.4 11.1" />
+      <line x1="5" y1="21" x2="19" y2="21" />
+    </>
+  ),
+  sprint: (
+    <>
+      <polyline points="5 6 10.5 12 5 18" />
+      <polyline points="12.5 6 18 12 12.5 18" />
+    </>
+  ),
+  reload: (
+    <>
+      <polyline points="23 4 23 10 17 10" />
+      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </>
+  ),
+  nade: (
+    <>
+      <circle cx="11.5" cy="14.5" r="6" />
+      <path d="M9.3 8.5V6.8h4.4v1.7" />
+      <path d="M13.7 7.4c2.8-.4 4.3.8 4.5 3.1" />
+      <circle cx="18.6" cy="5.5" r="1.6" />
+    </>
+  ),
+  wep: (
+    <>
+      <path d="M2.5 8.5h15.5v3.2h-3.4l-2.1 4.4H9.2l1.5-4.4H2.5z" />
+      <line x1="6" y1="11.7" x2="6" y2="14" />
+    </>
+  ),
+  pause: (
+    <>
+      <line x1="9" y1="5" x2="9" y2="19" />
+      <line x1="15" y1="5" x2="15" y2="19" />
+    </>
+  ),
+};
+
+function Icon({ name }: { name: string }) {
+  return (
+    <svg
+      className="tico"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.3}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {ICONS[name]}
+    </svg>
+  );
+}
+
+function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
+  const joyRef = useRef<HTMLDivElement>(null);
+  const knobRef = useRef<HTMLDivElement>(null);
+  const [held, setHeld] = useState<Record<string, boolean>>({});
+  const lookId = useRef<number | null>(null);
+  const lastLook = useRef({ x: 0, y: 0 });
+  const joyId = useRef<number | null>(null);
+  // Pointers that began on an action button. They keep the button held AND steer
+  // the camera, so one thumb can hold FIRE and aim without a second finger.
+  const dragLook = useRef(new Map<number, { x: number; y: number }>());
+
+  const setBtn = (name: string, down: boolean) => {
+    gameRef.current?.input.setTouch(name, down);
+    setHeld((h) => ({ ...h, [name]: down }));
+  };
+
+  const trackDrag = (e: React.PointerEvent) => {
+    dragLook.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  };
+  const dragToLook = (e: React.PointerEvent) => {
+    const last = dragLook.current.get(e.pointerId);
+    if (!last) return;
+    const dx = e.clientX - last.x;
+    const dy = e.clientY - last.y;
+    last.x = e.clientX;
+    last.y = e.clientY;
+    if (dx || dy) gameRef.current?.input.addTouchLook(dx * LOOK_GAIN, dy * LOOK_GAIN);
+  };
+  const endDrag = (e: React.PointerEvent) => {
+    dragLook.current.delete(e.pointerId);
+  };
+
+  useEffect(() => {
+    const drags = dragLook.current;
+    return () => {
+      drags.clear();
+      gameRef.current?.input.clearTouch();
+    };
+  }, [gameRef]);
+
+  const onJoyDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    joyId.current = e.pointerId;
+    moveJoy(e);
+  };
+  const moveJoy = (e: React.PointerEvent | PointerEvent) => {
+    const base = joyRef.current;
+    if (!base) return;
+    const r = base.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    let dx = e.clientX - cx;
+    let dy = e.clientY - cy;
+    const max = r.width * 0.38;
+    const mag = Math.hypot(dx, dy);
+    if (mag > max) {
+      dx = (dx / mag) * max;
+      dy = (dy / mag) * max;
+    }
+    if (knobRef.current) {
+      knobRef.current.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+    gameRef.current?.input.setTouchMove(dx / max, -dy / max);
+  };
+  const onJoyUp = (e: React.PointerEvent) => {
+    if (joyId.current !== e.pointerId) return;
+    joyId.current = null;
+    if (knobRef.current) knobRef.current.style.transform = "translate(0,0)";
+    gameRef.current?.input.setTouchMove(0, 0);
+  };
+
+  const onLookDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    lookId.current = e.pointerId;
+    lastLook.current = { x: e.clientX, y: e.clientY };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onLookMove = (e: React.PointerEvent) => {
+    if (lookId.current !== e.pointerId) return;
+    const dx = e.clientX - lastLook.current.x;
+    const dy = e.clientY - lastLook.current.y;
+    lastLook.current = { x: e.clientX, y: e.clientY };
+    gameRef.current?.input.addTouchLook(dx * LOOK_GAIN, dy * LOOK_GAIN);
+  };
+  const onLookUp = (e: React.PointerEvent) => {
+    if (lookId.current === e.pointerId) lookId.current = null;
+  };
+
+  const hold = (name: string) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      // capture on the button, not the <svg> icon inside it
+      e.currentTarget.setPointerCapture(e.pointerId);
+      trackDrag(e);
+      setBtn(name, true);
+    },
+    onPointerMove: dragToLook,
+    onPointerUp: (e: React.PointerEvent) => {
+      e.stopPropagation();
+      endDrag(e);
+      setBtn(name, false);
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      endDrag(e);
+      setBtn(name, false);
+    },
+  });
+
+  const tap = (fn: () => void) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.currentTarget.setPointerCapture(e.pointerId);
+      trackDrag(e);
+      fn();
+    },
+    onPointerMove: dragToLook,
+    onPointerUp: (e: React.PointerEvent) => {
+      e.stopPropagation();
+      endDrag(e);
+    },
+    onPointerCancel: endDrag,
+  });
+
+  return (
+    <div className="touch-layer">
+      <div
+        className="look-pad"
+        onPointerDown={onLookDown}
+        onPointerMove={onLookMove}
+        onPointerUp={onLookUp}
+        onPointerCancel={onLookUp}
+      />
+      <div
+        ref={joyRef}
+        className="joy-base"
+        onPointerDown={onJoyDown}
+        onPointerMove={(e) => joyId.current === e.pointerId && moveJoy(e)}
+        onPointerUp={onJoyUp}
+        onPointerCancel={onJoyUp}
+      >
+        <div ref={knobRef} className="joy-knob" />
+      </div>
+      <button className={`tbtn fire ${held.fire ? "held" : ""}`} aria-label="fire" {...hold("fire")}>
+        <Icon name="fire" />
+      </button>
+      <button className={`tbtn jump ${held.jump ? "held" : ""}`} aria-label="jump" {...hold("jump")}>
+        <Icon name="jump" />
+      </button>
+      <button className={`tbtn aim ${held.aim ? "held" : ""}`} aria-label="aim" {...hold("aim")}>
+        <Icon name="aim" />
+      </button>
+      <button className={`tbtn reload ${held.reload ? "held" : ""}`} aria-label="reload" {...hold("reload")}>
+        <Icon name="reload" />
+      </button>
+      <button className={`tbtn sprint ${held.sprint ? "held" : ""}`} aria-label="sprint" {...hold("sprint")}>
+        <Icon name="sprint" />
+      </button>
+      <button className={`tbtn crouch ${held.crouch ? "held" : ""}`} aria-label="crouch" {...hold("crouch")}>
+        <Icon name="crouch" />
+      </button>
+      <button className={`tbtn nade ${held.grenade ? "held" : ""}`} aria-label="grenade" {...hold("grenade")}>
+        <Icon name="nade" />
+      </button>
+      <button className="tbtn wep" aria-label="switch weapon" {...tap(() => gameRef.current?.player.nextWeapon(1))}>
+        <Icon name="wep" />
+      </button>
+      <button
+        className="tbtn pause"
+        aria-label="pause"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          gameRef.current?.pause();
+        }}
+      >
+        <Icon name="pause" />
+      </button>
+    </div>
+  );
+}
