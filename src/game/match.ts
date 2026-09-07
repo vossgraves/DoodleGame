@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { Net, type PeerMeta } from "./net";
 import { RemotePlayer, encodeLocal, TEAM_INKS, FFA_INK, type Snapshot } from "./remote";
 import { Bot, BOT_NAMES, type BotCandidate, type BotSkill } from "./bot";
-import { raySphere, type World } from "./physics";
+import { raySphere, PEN_DAMAGE, type World } from "./physics";
 
 export type MatchMode = "ffa" | "tdm" | "br";
 export type MatchState = "offline" | "lobby" | "playing" | "over";
@@ -385,14 +385,19 @@ export class MatchNet {
   private botShoot(bot: Bot, origin: THREE.Vector3, dir: THREE.Vector3, damage: number, targetId: string) {
     const t = this.candidateCache.find((c) => c.id === targetId);
     if (!t || !t.alive) return;
-    const wall = this.hooks.world.raycast(origin, dir, 120);
-    const limit = wall ? wall.dist : 120;
-    const head = raySphere(origin, dir, t.headPos, 0.26, limit);
-    const body = head === null ? raySphere(origin, dir, t.center, 0.42, limit) : null;
+    const trace = this.hooks.world.penTrace(origin, dir, 120);
+    const head = raySphere(origin, dir, t.headPos, 0.26, trace.dist);
+    const body = head === null ? raySphere(origin, dir, t.center, 0.42, trace.dist) : null;
     if (head === null && body === null) return;
-    const dmg = head !== null ? damage * 2.2 : damage;
+    let dmg = head !== null ? damage * 2.2 : damage;
+    const at = head !== null ? head : body!;
+    if (trace.penAt !== null && at > trace.penAt) dmg *= PEN_DAMAGE;
 
     if (targetId === this.net.id) {
+      // bots hurt us in-process, so nothing sets this the way `pdmg` would —
+      // without it the kill cam has no shooter and never opens
+      this.lastHitBy = bot.id;
+      this.lastHitFrom = origin.clone();
       this.hooks.hurt(dmg, origin.clone());
     } else if (this.bots.has(targetId)) {
       this.damageBot(targetId, dmg, bot.id);
@@ -740,6 +745,7 @@ export class MatchNet {
       if (!this.canHurt(by)) return;
       const pos = d.from ? new THREE.Vector3(d.from[0], d.from[1], d.from[2]) : null;
       this.lastHitBy = by;
+      if (pos) this.lastHitFrom = pos.clone();
       this.hooks.hurt(Math.max(0, d.amount || 0), pos);
     });
 
@@ -800,6 +806,10 @@ export class MatchNet {
   }
 
   lastHitBy: string | null = null;
+  /** where the shot that hurt you came from, for the kill cam */
+  lastHitFrom: THREE.Vector3 | null = null;
+  /** set on death in a PvP match, cleared when you come back */
+  killCam: { by: string; name: string; from: THREE.Vector3; at: THREE.Vector3; hp: number } | null = null;
 
   private smallestTeam() {
     let a = 0;
@@ -925,10 +935,23 @@ export class MatchNet {
       this.sendScores();
       this.checkWin();
     }
+    // Frame whoever did it. The shot origin is where the camera goes, and the
+    // body is what it looks at; a remote we still track gives their live health.
+    if (killer) {
+      const shooter = this.remotes.get(killer);
+      this.killCam = {
+        by: killer,
+        name: k?.name ?? "someone",
+        from: (this.lastHitFrom ?? shooter?.center ?? p).clone(),
+        at: p.clone(),
+        hp: shooter ? Math.max(0, Math.round(shooter.hp)) : 0,
+      };
+    } else this.killCam = null;
+
     this.lastHitBy = null;
+    this.lastHitFrom = null;
     this.deadT = 0;
     // battle royale has no second chances
-    // name whoever did it, the way a kill cam would
     const byName = k?.name;
     if (this.mode === "br") {
       const me = this.roster.get(this.net.id!);
@@ -981,6 +1004,7 @@ export class MatchNet {
       this.deadT += dt;
       if (this.deadT >= RESPAWN_DELAY) {
         this.pendingRespawn = false;
+        this.killCam = null;
         this.hooks.respawn(this.farthestSpawn());
         this.hooks.announce("BACK ON THE PAGE", "");
       }

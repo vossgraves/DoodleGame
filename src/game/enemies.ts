@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { World, raySphere } from "./physics";
+import { World, raySphere, PEN_DAMAGE } from "./physics";
 import { INK, makeInkMaterial } from "./renderer";
 import { rand, randInt, clamp, damp, wrapAngle, choose, TAU } from "./math";
 import type { Mode } from "./level";
@@ -519,8 +519,10 @@ export class Combat {
     falloff: [number, number, number] | null,
     player: Player,
   ): { hit: boolean; kill: boolean; crit: boolean; point: THREE.Vector3; enemy?: Enemy; remote?: NetTarget } {
-    const worldHit = this.world.raycast(origin, dir, maxDist);
-    let bestDist = worldHit ? worldHit.dist : maxDist;
+    const trace = this.world.penTrace(origin, dir, maxDist);
+    let bestDist = trace.dist;
+    // anything past the punched-through surface only gets what is left of the round
+    const penMul = (t: number) => (trace.penAt !== null && t > trace.penAt ? PEN_DAMAGE : 1);
     let best: { e: Enemy; part: "head" | "body"; t: number } | null = null;
     for (const e of this.enemies) {
       if (!e.alive) continue;
@@ -555,8 +557,9 @@ export class Combat {
     }
     const point = origin.clone().addScaledVector(dir, bestDist);
     this.tracer(origin, point);
+    if (trace.entry) this.burst(trace.entry, INK.BLUE, 3, 3);
     if (bestR) {
-      let d = dmg;
+      let d = dmg * penMul(bestR.t);
       if (falloff) {
         const [near, far, min] = falloff;
         if (bestR.t > near) d *= lerp(1, min, clamp((bestR.t - near) / (far - near), 0, 1));
@@ -568,7 +571,7 @@ export class Combat {
       return { hit: true, kill: false, crit, point, remote: bestR.r };
     }
     if (best) {
-      let d = dmg;
+      let d = dmg * penMul(best.t);
       if (falloff) {
         const [near, far, min] = falloff;
         if (best.t > near) d *= lerp(1, min, clamp((best.t - near) / (far - near), 0, 1));
@@ -580,7 +583,7 @@ export class Combat {
       if (killed) this.onEnemyKilled(best.e, player);
       return { hit: true, kill: killed, crit, point, enemy: best.e };
     }
-    if (worldHit) this.burst(point, INK.BLUE, 4, 3);
+    if (bestDist < maxDist) this.burst(point, INK.BLUE, 4, 3);
     return { hit: false, kill: false, crit: false, point };
   }
 

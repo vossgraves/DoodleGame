@@ -33,6 +33,8 @@ import { WeaponIcon } from "./WeaponIcon";
 import { QUALITY, isQuality, type Quality } from "./game/renderer";
 import * as account from "./game/account";
 import * as fullscreen from "./game/fullscreen";
+import * as hudpos from "./game/hudlayout";
+import { HUD_PIECES, type HudLayout } from "./game/hudlayout";
 
 type Screen = "menu" | "modes" | "howto" | "settings" | "loadout" | "game";
 
@@ -141,6 +143,7 @@ const emptyHud = (): HudSnap => ({
   skillReady: false,
   night: false,
   goggles: false,
+  killCam: null,
 });
 
 function isTouchDevice() {
@@ -206,6 +209,11 @@ export default function App() {
   const [swapping, setSwapping] = useState(false);
   const [emoteOpen, setEmoteOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  // settings reached from the pause menu ride over the match; changing `screen`
+  // would tear the Game down and lose it
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hudEdit, setHudEdit] = useState(false);
+  const [hudLayout, setHudLayout] = useState<HudLayout>(hudpos.load);
   const [portrait, setPortrait] = useState(false);
   const [isFull, setIsFull] = useState(false);
   const [fsPending, setFsPending] = useState(false);
@@ -284,6 +292,18 @@ export default function App() {
   useEffect(() => {
     if (swapping && !hud.canSwap) setSwapping(false);
   }, [swapping, hud.canSwap]);
+
+  // HUD overrides go in as a stylesheet appended after the app's own, so they
+  // win on equal specificity without every component knowing about them
+  useEffect(() => {
+    let tag = document.getElementById("hud-overrides") as HTMLStyleElement | null;
+    if (!tag) {
+      tag = document.createElement("style");
+      tag.id = "hud-overrides";
+      document.head.appendChild(tag);
+    }
+    tag.textContent = hudpos.css(hudLayout);
+  }, [hudLayout]);
 
   // the hitmarker is CSS, so the chosen hit colour rides in as a variable
   useEffect(() => {
@@ -454,7 +474,7 @@ export default function App() {
         }}
       />
 
-      {touch && fsPending && !isFull && <FullscreenNudge onDone={() => setFsPending(false)} />}
+      {touch && fsPending && !isFull && !hudEdit && <FullscreenNudge onDone={() => setFsPending(false)} />}
 
       {screen === "menu" && (
         <Menu
@@ -529,8 +549,9 @@ export default function App() {
           }}
         />
       )}
-      {screen === "settings" && (
+      {(screen === "settings" || settingsOpen) && (
         <Settings
+          overlay={settingsOpen}
           sens={sens}
           invert={invert}
           music={music}
@@ -612,14 +633,23 @@ export default function App() {
             setMe(null);
             setStats(null);
           }}
-          onBack={() => setScreen("menu")}
+          onBack={() => {
+            if (settingsOpen) setSettingsOpen(false);
+            else setScreen("menu");
+          }}
         />
       )}
 
       {screen === "game" && (
         <>
-          <HUD hud={hud} hidden={gstate === "paused" || gstate === "dead"} touch={touch} preset={hudPreset} />
-          {!touch && gstate === "playing" && !locked && !emoteOpen && !chatOpen && (
+          {/* the editor drags the real HUD, so it has to stay up while paused */}
+          <HUD
+            hud={hud}
+            hidden={(gstate === "paused" && !hudEdit) || gstate === "dead" || !!hud.killCam}
+            touch={touch}
+            preset={hudPreset}
+          />
+          {!touch && gstate === "playing" && !locked && !emoteOpen && !chatOpen && !hud.killCam && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(246,243,230,0.35)]"
               onClick={() => gameRef.current?.input.requestLock()}
@@ -627,14 +657,25 @@ export default function App() {
               <div className="ink-panel px-10 py-6 text-center text-3xl blink">click to scribble</div>
             </div>
           )}
-          {touch && gstate === "playing" && <TouchControls gameRef={gameRef} />}
-          {gstate === "playing" && (
+          {touch && (gstate === "playing" || hudEdit) && !hud.killCam && <TouchControls gameRef={gameRef} />}
+          {(gstate === "playing" || hudEdit) && !hud.killCam && (
             <StreakTray
               hud={hud}
               onUse={(k) => gameRef.current?.useStreak(k as Parameters<Game["useStreak"]>[0])}
             />
           )}
-          {gstate === "playing" && (
+          {hud.killCam && (
+            <div className="killcam">
+              <div className="kc-bar">
+                <span className="opacity-70">erased by</span>
+                <b>{hud.killCam.name}</b>
+                <span className="opacity-70">
+                  {hud.killCam.dist}m · {hud.killCam.hp} hp left
+                </span>
+              </div>
+            </div>
+          )}
+          {(gstate === "playing" || hudEdit) && !hud.killCam && (
             <EmoteWheel gameRef={gameRef} touch={touch} open={emoteOpen} setOpen={setEmoteOpen} />
           )}
           {gstate === "playing" && mode === "arena" && (
@@ -699,10 +740,23 @@ export default function App() {
               onMenu={toMenu}
             />
           )}
-          {gstate === "paused" && (
+          {gstate === "paused" && !settingsOpen && !hudEdit && (
             <PauseOverlay
               onResume={() => gameRef.current?.resume()}
+              onSettings={() => setSettingsOpen(true)}
+              onHud={() => setHudEdit(true)}
               onMenu={toMenu}
+            />
+          )}
+          {hudEdit && (
+            <HudEditor
+              layout={hudLayout}
+              onChange={(l) => {
+                setHudLayout(l);
+                if (Object.keys(l).length) hudpos.save(l);
+                else hudpos.clear();
+              }}
+              onClose={() => setHudEdit(false)}
             />
           )}
           {gstate === "dead" && (
@@ -1041,6 +1095,7 @@ function Settings({
   tracerInk,
   onHitInk,
   onTracerInk,
+  overlay,
   hudPreset,
   onHudPreset,
   adsToggle,
@@ -1068,6 +1123,8 @@ function Settings({
   tracerInk: number;
   onHitInk: (v: number) => void;
   onTracerInk: (v: number) => void;
+  /** true when this is layered over a running match rather than its own screen */
+  overlay?: boolean;
   hudPreset: string;
   onHudPreset: (v: string) => void;
   adsToggle: boolean;
@@ -1088,7 +1145,13 @@ function Settings({
   const [tab, setTab] = useState<"controls" | "video" | "audio" | "account">("controls");
 
   return (
-    <div className="absolute inset-0 z-10 overflow-y-auto p-4 paper-bg">
+    <div
+      className={
+        overlay
+          ? "absolute inset-0 z-40 overflow-y-auto bg-[rgba(246,243,230,0.88)] p-4"
+          : "absolute inset-0 z-10 overflow-y-auto p-4 paper-bg"
+      }
+    >
       <div className="ink-panel mx-auto w-full max-w-[720px] px-8 py-7">
         <h2 className="m-0 text-center font-[Caveat,cursive] text-5xl">settings</h2>
 
@@ -2670,7 +2733,127 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
   );
 }
 
-function PauseOverlay({ onResume, onMenu }: { onResume: () => void; onMenu: () => void }) {
+/**
+ * Drag the HUD where you want it. Handles are measured from wherever each piece
+ * currently sits, so the CSS stays the single source of the defaults and this
+ * only records the difference.
+ */
+function HudEditor({
+  layout,
+  onChange,
+  onClose,
+}: {
+  layout: HudLayout;
+  onChange: (l: HudLayout) => void;
+  onClose: () => void;
+}) {
+  const [spots, setSpots] = useState<Record<string, { x: number; y: number; w: number; h: number }>>({});
+  const [picked, setPicked] = useState<string | null>(null);
+  const dragging = useRef<string | null>(null);
+
+  // measure where everything is right now, once the HUD has laid out
+  useEffect(() => {
+    const measure = () => {
+      const found: Record<string, { x: number; y: number; w: number; h: number }> = {};
+      for (const p of HUD_PIECES) {
+        const el = document.querySelector(p.sel);
+        if (!el) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 4 || r.height < 4) continue;
+        found[p.id] = {
+          x: ((r.left + r.width / 2) / window.innerWidth) * 100,
+          y: ((r.top + r.height / 2) / window.innerHeight) * 100,
+          w: r.width,
+          h: r.height,
+        };
+      }
+      setSpots(found);
+    };
+    const id = requestAnimationFrame(measure);
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener("resize", measure);
+    };
+  }, [layout]);
+
+  const move = (e: React.PointerEvent) => {
+    const id = dragging.current;
+    if (!id) return;
+    const x = Math.min(98, Math.max(2, (e.clientX / window.innerWidth) * 100));
+    const y = Math.min(98, Math.max(2, (e.clientY / window.innerHeight) * 100));
+    onChange({ ...layout, [id]: { x, y, scale: layout[id]?.scale ?? 1 } });
+  };
+
+  const scale = (v: number) => {
+    if (!picked) return;
+    const at = layout[picked] ?? spots[picked];
+    if (!at) return;
+    onChange({ ...layout, [picked]: { x: at.x, y: at.y, scale: v } });
+  };
+
+  const current = picked ? (layout[picked]?.scale ?? 1) : 1;
+
+  return (
+    <div
+      className="hud-editor"
+      onPointerMove={move}
+      onPointerUp={() => (dragging.current = null)}
+      onPointerCancel={() => (dragging.current = null)}
+    >
+      {HUD_PIECES.map((p) => {
+        const at = spots[p.id];
+        if (!at) return null;
+        return (
+          <button
+            key={p.id}
+            className={`hud-handle ${picked === p.id ? "on" : ""}`}
+            style={{ left: `${at.x}%`, top: `${at.y}%`, width: at.w, height: at.h }}
+            onPointerDown={(e) => {
+              e.currentTarget.setPointerCapture(e.pointerId);
+              dragging.current = p.id;
+              setPicked(p.id);
+            }}
+          >
+            <span>{p.name}</span>
+          </button>
+        );
+      })}
+
+      <div className="hud-editor-bar">
+        <b>{picked ? HUD_PIECES.find((p) => p.id === picked)?.name : "drag a piece"}</b>
+        <input
+          className="ink-range"
+          type="range"
+          min={60}
+          max={180}
+          disabled={!picked}
+          value={Math.round(current * 100)}
+          onChange={(e) => scale(Number(e.target.value) / 100)}
+          aria-label="size"
+        />
+        <button className="ink-btn text-sm" onClick={() => onChange({})}>
+          reset
+        </button>
+        <button className="ink-btn text-sm" onClick={onClose}>
+          done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PauseOverlay({
+  onResume,
+  onSettings,
+  onHud,
+  onMenu,
+}: {
+  onResume: () => void;
+  onSettings: () => void;
+  onHud: () => void;
+  onMenu: () => void;
+}) {
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.62)] p-4">
       <div className="ink-panel px-12 py-8 text-center">
@@ -2679,6 +2862,12 @@ function PauseOverlay({ onResume, onMenu }: { onResume: () => void; onMenu: () =
         <div className="mt-6 flex flex-col gap-3">
           <button className="ink-btn big" onClick={onResume}>
             resume
+          </button>
+          <button className="ink-btn" onClick={onHud}>
+            move the hud
+          </button>
+          <button className="ink-btn" onClick={onSettings}>
+            settings
           </button>
           <button className="ink-btn" onClick={onMenu}>
             menu

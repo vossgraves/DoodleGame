@@ -1542,3 +1542,108 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   font-size: 15px;
   animation: blink 1.6s infinite;
 }
+
+/* ---- hud editor ---------------------------------------------------------- */
+.hud-editor {
+  position: absolute;
+  inset: 0;
+  z-index: 46;
+  background: rgba(246, 243, 230, 0.35);
+  touch-action: none;
+}
+.hud-handle {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  border: 2.5px dashed var(--ink);
+  border-radius: 10px;
+  background: rgba(26, 48, 192, 0.12);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  display: grid;
+  place-items: center;
+  cursor: grab;
+  touch-action: none;
+}
+.hud-handle.on {
+  border-color: var(--red);
+  border-style: solid;
+  background: rgba(208, 32, 48, 0.18);
+  color: var(--red);
+}
+.hud-handle span {
+  pointer-events: none;
+  background: rgba(246, 243, 230, 0.85);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+/* docked at the top: on a phone every draggable piece is down at the thumbs */
+.hud-editor-bar {
+  position: absolute;
+  left: 50%;
+  top: calc(8px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  background: rgba(250, 248, 238, 0.96);
+  font-size: 15px;
+  white-space: nowrap;
+}
+.hud-editor-bar b {
+  min-width: 5.5em;
+  text-align: center;
+}
+.hud-editor-bar .ink-range {
+  width: 96px;
+}
+.hud-editor-bar .ink-btn {
+  padding: 2px 12px;
+  font-size: 22px;
+}
+
+/* ---- kill cam ------------------------------------------------------------ */
+.killcam {
+  position: absolute;
+  inset: 0;
+  z-index: 24;
+  pointer-events: none;
+}
+.killcam::before,
+.killcam::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7vh;
+  background: rgba(20, 22, 32, 0.82);
+}
+.killcam::before {
+  top: 0;
+}
+.killcam::after {
+  bottom: 0;
+}
+.kc-bar {
+  position: absolute;
+  left: 50%;
+  bottom: calc(7vh + 16px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 16px;
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  background: rgba(250, 248, 238, 0.94);
+  font-size: 18px;
+  white-space: nowrap;
+}
+.kc-bar b {
+  font-family: Caveat, cursive;
+  font-size: 30px;
+  color: var(--red);
+}

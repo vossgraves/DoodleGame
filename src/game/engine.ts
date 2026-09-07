@@ -85,6 +85,8 @@ export interface HudSnap {
   /** night map, and whether the goggles are down */
   night: boolean;
   goggles: boolean;
+  /** who put you down, while the kill cam is framing them */
+  killCam: { name: string; hp: number; dist: number } | null;
   /** minimap blips in world space; the UI rotates them into the player's frame */
   radar: { x: number; z: number; hostile: boolean }[];
   /** the map's footprint in world units, built once when the level loads */
@@ -143,6 +145,7 @@ const defaultHud = (): HudSnap => ({
   skillReady: false,
   night: false,
   goggles: false,
+  killCam: null,
   radar: [],
   radarWalls: [],
   radarSelf: { x: 0, z: 0, yaw: 0 },
@@ -274,6 +277,31 @@ export class Game {
   }
 
   /**
+   * The kill cam. Not a replay — there is no recording — but the shot's own
+   * origin looking back at your body, which is the part you actually want:
+   * where they were standing and what they could see.
+   */
+  private killCamView(dt: number) {
+    const cam = this.match.killCam;
+    if (!cam || this.player.alive) {
+      this.killCamT = 0;
+      this.hud.killCam = null;
+      return;
+    }
+    this.killCamT += dt;
+    // pull back a little from the muzzle and drift in, so it reads as a shot
+    const back = new THREE.Vector3().subVectors(cam.from, cam.at);
+    const dist = back.length() || 1;
+    back.divideScalar(dist);
+    const ease = Math.min(1, this.killCamT * 0.6);
+    const eye = cam.at.clone().addScaledVector(back, Math.min(dist, 3.5) + (1 - ease) * 2.5);
+    eye.y += 1.4;
+    this.R.camera.position.copy(eye);
+    this.R.camera.lookAt(cam.at.x, cam.at.y + 0.9, cam.at.z);
+    this.hud.killCam = { name: cam.name, hp: cam.hp, dist: Math.round(dist) };
+  }
+
+  /**
    * Pay out a ranked match once, when it ends. It reads the final board rather
    * than tallying as it goes, so a late disconnect cannot bank a better place
    * than the one you actually finished in.
@@ -320,6 +348,7 @@ export class Game {
   /** fires once when a ranked match ends, with what it was worth */
   onRanked: ((delta: number, place: number, players: number) => void) | null = null;
   private gogglesOn = false;
+  private killCamT = 0;
   private rankedDone = false;
 
   setFpsCap(fps: number) {
@@ -763,6 +792,8 @@ export class Game {
       if (view) {
         this.R.camera.position.copy(view.pos);
         this.R.camera.lookAt(view.look);
+      } else {
+        this.killCamView(dt);
       }
       this.combat.update(dt, this.player, this.time);
       for (const a of this.level.animated) a.update(this.time);

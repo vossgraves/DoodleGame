@@ -12,6 +12,11 @@ export interface Collider {
 
 const EPS = 0.002;
 
+/** Cover thicker than this stops a bullet outright. */
+export const PEN_MAX_THICK = 0.9;
+/** What is left of a bullet after it comes out the far side. */
+export const PEN_DAMAGE = 0.45;
+
 export class World {
   boxes: Collider[] = [];
   bounds = { minX: -42, maxX: 42, minZ: -42, maxZ: 42 };
@@ -151,9 +156,9 @@ export class World {
     d: THREE.Vector3,
     maxDist: number,
     skipNoShoot = false,
-  ): { dist: number; point: THREE.Vector3; nx: number; ny: number; nz: number } | null {
+  ): { dist: number; point: THREE.Vector3; nx: number; ny: number; nz: number; box: Collider } | null {
     let best = maxDist;
-    let hit = false;
+    let hit: Collider | null = null;
     let nx = 0,
       ny = 1,
       nz = 0;
@@ -162,7 +167,7 @@ export class World {
       const t = rayAabb(o, d, b, best);
       if (t !== null && t < best && t >= 0) {
         best = t;
-        hit = true;
+        hit = b;
         const px = o.x + d.x * t,
           py = o.y + d.y * t,
           pz = o.z + d.z * t;
@@ -177,7 +182,57 @@ export class World {
       }
     }
     if (!hit) return null;
-    return { dist: best, point: new THREE.Vector3(o.x + d.x * best, o.y + d.y * best, o.z + d.z * best), nx, ny, nz };
+    return {
+      dist: best,
+      point: new THREE.Vector3(o.x + d.x * best, o.y + d.y * best, o.z + d.z * best),
+      nx,
+      ny,
+      nz,
+      box: hit,
+    };
+  }
+
+  // How much solid there is straight ahead from a surface hit. A bullet is only
+  // allowed through thin cover, so the exit point matters more than the hit.
+  thickness(point: THREE.Vector3, d: THREE.Vector3, b: Collider): number {
+    const inside = new THREE.Vector3(point.x + d.x * EPS, point.y + d.y * EPS, point.z + d.z * EPS);
+    let far = 0;
+    for (const axis of ["x", "y", "z"] as const) {
+      const dir = d[axis];
+      if (Math.abs(dir) < 1e-8) continue;
+      const min = axis === "x" ? b.minx : axis === "y" ? b.miny : b.minz;
+      const max = axis === "x" ? b.maxx : axis === "y" ? b.maxy : b.maxz;
+      const t = ((dir > 0 ? max : min) - inside[axis]) / dir;
+      if (t > 0 && (far === 0 || t < far)) far = t;
+    }
+    return far;
+  }
+
+  /**
+   * A trace that is allowed through one thin surface. `penAt` is how far along
+   * the ray that surface sat — anything hit past it was shot through cover and
+   * should be scored at {@link PEN_DAMAGE}.
+   */
+  penTrace(
+    o: THREE.Vector3,
+    d: THREE.Vector3,
+    maxDist: number,
+  ): { dist: number; point: THREE.Vector3; penAt: number | null; entry: THREE.Vector3 | null } {
+    const end = (t: number) => new THREE.Vector3(o.x + d.x * t, o.y + d.y * t, o.z + d.z * t);
+    const first = this.raycast(o, d, maxDist);
+    if (!first) return { dist: maxDist, point: end(maxDist), penAt: null, entry: null };
+    const stop = { dist: first.dist, point: first.point, penAt: null, entry: null };
+    const thick = this.thickness(first.point, d, first.box);
+    if (thick <= 0 || thick > PEN_MAX_THICK) return stop;
+    const exit = first.dist + thick + EPS * 4;
+    if (exit >= maxDist) return stop;
+    const second = this.raycast(end(exit), d, maxDist - exit);
+    return {
+      dist: second ? exit + second.dist : maxDist,
+      point: second ? second.point : end(maxDist),
+      penAt: first.dist,
+      entry: first.point,
+    };
   }
 
   hasLineOfSight(a: THREE.Vector3, b: THREE.Vector3) {
