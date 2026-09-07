@@ -12,6 +12,9 @@ body,
 #root {
   margin: 0;
   height: 100%;
+  /* dvh tracks the URL bar sliding away, which is what you get on a phone that
+     cannot go fullscreen; the 100% above is the fallback */
+  height: 100dvh;
   overflow: hidden;
   background: var(--paper);
   font-family: "Patrick Hand", "Caveat", "Comic Sans MS", cursive;
@@ -1521,4 +1524,21 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   height: 44px;
   left: calc(12px + env(safe-area-inset-left));
   top: calc(12px + env(safe-area-inset-top));
+}
+
+/* ---- fullscreen nudge ---------------------------------------------------- */
+.fs-nudge {
+  position: absolute;
+  left: 50%;
+  top: calc(10px + env(safe-area-inset-top));
+  transform: translateX(-50%);
+  z-index: 60;
+  padding: 5px 14px;
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  background: rgba(246, 243, 230, 0.92);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 15px;
+  animation: blink 1.6s infinite;
 }

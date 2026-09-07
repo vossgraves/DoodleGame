@@ -1,0 +1,20 @@
+{
+  "name": "Doodle District",
+  "short_name": "Doodle",
+  "description": "A ballpoint-on-lined-paper FPS.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#f6f3e6",
+  "theme_color": "#f6f3e6",
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

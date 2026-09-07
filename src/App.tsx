@@ -32,6 +32,7 @@ import type { BotSkill } from "./game/bot";
 import { WeaponIcon } from "./WeaponIcon";
 import { QUALITY, isQuality, type Quality } from "./game/renderer";
 import * as account from "./game/account";
+import * as fullscreen from "./game/fullscreen";
 
 type Screen = "menu" | "modes" | "howto" | "settings" | "loadout" | "game";
 
@@ -161,8 +162,29 @@ function RotatePrompt() {
         </svg>
         <h2 className="m-0 font-[Caveat,cursive] text-5xl">turn your phone</h2>
         <p className="mt-2 text-xl opacity-75">the stick and the fire button need the width</p>
+        {fullscreen.supported() && fullscreen.wanted() && (
+          <p className="mt-3 text-lg opacity-60">then tap once — it goes fullscreen</p>
+        )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The tap that buys fullscreen. It only appears while an intent is armed, and
+ * the window-level listener will usually spend it first — this is the visible
+ * affordance for anyone who rotates and then hesitates.
+ */
+function FullscreenNudge({ onDone }: { onDone: () => void }) {
+  return (
+    <button
+      className="fs-nudge"
+      onClick={() => {
+        void fullscreen.enter().then(onDone);
+      }}
+    >
+      tap for fullscreen
+    </button>
   );
 }
 
@@ -185,6 +207,8 @@ export default function App() {
   const [emoteOpen, setEmoteOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [portrait, setPortrait] = useState(false);
+  const [isFull, setIsFull] = useState(false);
+  const [fsPending, setFsPending] = useState(false);
   const [me, setMe] = useState<account.Account | null>(null);
   const [stats, setStats] = useState<account.Stats | null>(null);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
@@ -203,6 +227,7 @@ export default function App() {
   });
   const [fpsCap, setFpsCap] = useState(() => Number(localStorage.getItem("doodle_fps") || 0));
   const [night, setNight] = useState(() => localStorage.getItem("doodle_night") === "1");
+  const [fsWanted, setFsWanted] = useState(() => fullscreen.wanted());
   const [ranked, setRanked] = useState(() => localStorage.getItem("doodle_ranked") === "1");
   const [sr, setSr] = useState(() => sanitizeSr(localStorage.getItem("doodle_sr")));
   const [srSwing, setSrSwing] = useState(0);
@@ -245,14 +270,15 @@ export default function App() {
     return () => mq.removeEventListener("change", update);
   }, []);
 
-  // Best effort: most browsers only honour this in fullscreen, hence the prompt.
+  // Rotating to landscape arms fullscreen; the next touch spends it. Only on a
+  // touch device — a desktop browser taking over the screen unasked is rude.
   useEffect(() => {
-    if (screen !== "game" || !touch) return;
-    const o = window.screen?.orientation as (ScreenOrientation & { lock?: (s: string) => Promise<void> }) | undefined;
-    o?.lock?.("landscape").catch(() => {
-      /* not permitted outside fullscreen; the prompt covers it */
+    if (!touch) return;
+    return fullscreen.install(({ full, pending }) => {
+      setIsFull(full);
+      setFsPending(pending);
     });
-  }, [screen, touch]);
+  }, [touch]);
 
   // the window can lapse while the menu is open; do not leave it stranded
   useEffect(() => {
@@ -428,6 +454,8 @@ export default function App() {
         }}
       />
 
+      {touch && fsPending && !isFull && <FullscreenNudge onDone={() => setFsPending(false)} />}
+
       {screen === "menu" && (
         <Menu
           bestD={bestD}
@@ -549,6 +577,8 @@ export default function App() {
             localStorage.setItem("doodle_fps", String(v));
             gameRef.current?.setFpsCap(v);
           }}
+          fsWanted={fsWanted}
+          onFsWanted={setFsWanted}
           me={me}
           stats={stats}
           uid={playerUid}
@@ -1019,6 +1049,8 @@ function Settings({
   onQuality,
   fps,
   onFps,
+  fsWanted,
+  onFsWanted,
   me,
   stats,
   uid,
@@ -1044,6 +1076,8 @@ function Settings({
   onQuality: (q: Quality) => void;
   fps: number;
   onFps: (v: number) => void;
+  fsWanted: boolean;
+  onFsWanted: (v: boolean) => void;
   me: account.Account | null;
   stats: account.Stats | null;
   uid: string;
@@ -1122,6 +1156,20 @@ function Settings({
               </div>
               <span className="text-base opacity-60">a cap your phone can hold beats a number it cannot</span>
             </div>
+            {fullscreen.supported() && (
+              <label className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  checked={fsWanted}
+                  onChange={(e) => {
+                    fullscreen.setWanted(e.target.checked);
+                    onFsWanted(e.target.checked);
+                    if (!e.target.checked) void fullscreen.exit();
+                  }}
+                />
+                go fullscreen when you turn the phone
+              </label>
+            )}
             <div className="flex flex-col gap-2">
               <span>hud layout</span>
               <div className="flex flex-wrap gap-2">
