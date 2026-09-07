@@ -288,9 +288,13 @@ export class InkRenderer {
    * shrinks; the HUD is DOM and stays sharp.
    */
   private resScale = 1;
+  /** the highest scale that has not already proved too slow */
+  private ceiling = 1;
   private budget = 1 / 60;
   private acc = 0;
   private accN = 0;
+  private sinceChange = 0;
+  private lastTime = 0;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality = "high") {
     this.renderer = new THREE.WebGLRenderer({
@@ -355,6 +359,8 @@ export class InkRenderer {
     this.postMat.defines = QUALITY[q].cheap ? { CHEAP: "1" } : {};
     this.postMat.needsUpdate = true;
     this.resScale = 1;
+    this.ceiling = 1;
+    this.sinceChange = 0;
     this.resize(this.lastW, this.lastH);
   }
 
@@ -365,24 +371,44 @@ export class InkRenderer {
 
   /**
    * Feed one frame's time in. Sustained overruns shed render resolution and
-   * sustained headroom takes it back, a step at a time so the picture never
-   * pulses; the target is only ever resized on a decision, not every frame.
+   * sustained headroom takes it back.
+   *
+   * Every adjustment costs a visible white frame — assigning canvas.width clears
+   * the backing store, and the paper page shows through until the next draw — so
+   * this is built to converge and then stop: a long sample window, a cooldown
+   * between decisions, and a ceiling that never lets it climb back to a scale it
+   * has already failed at. Without the ceiling a phone sitting between two steps
+   * would flash forever.
    */
   pace(dt: number) {
     this.acc += dt;
     this.accN += 1;
-    if (this.accN < 30) return;
+    this.sinceChange += dt;
+    if (this.accN < 90) return;
     const mean = this.acc / this.accN;
     this.acc = 0;
     this.accN = 0;
+    if (this.sinceChange < 4) return;
     const before = this.resScale;
     const floor = Math.min(1, MIN_PR / Math.min(window.devicePixelRatio, QUALITY[this.quality].pr));
-    // Meeting the target is itself the evidence of headroom: under a frame cap
-    // the clock can never read faster than the cap, so a "well under budget"
-    // test would only ever shed resolution and never take it back.
-    if (mean > this.budget * 1.22) this.resScale = Math.max(floor, this.resScale - 0.1);
-    else if (mean <= this.budget * 1.05) this.resScale = Math.min(1, this.resScale + 0.05);
-    if (this.resScale !== before) this.resize(this.lastW, this.lastH);
+    if (mean > this.budget * 1.22) {
+      // Correct in proportion to how far over we are rather than one notch at a
+      // time: fill rate goes as the square of the scale, so this lands close in
+      // a single step and spends one white frame instead of six.
+      const over = mean / this.budget;
+      this.resScale = Math.max(floor, this.resScale * Math.max(0.5, Math.min(0.92, 1 / Math.sqrt(over))));
+      this.ceiling = this.resScale;
+    } else if (mean <= this.budget * 1.05) {
+      // Meeting the target is itself the evidence of headroom: under a frame cap
+      // the clock can never read faster than the cap, so a "well under budget"
+      // test would only ever shed resolution and never take it back.
+      this.resScale = Math.min(this.ceiling, this.resScale + 0.05);
+    }
+    if (this.resScale === before) return;
+    this.sinceChange = 0;
+    this.resize(this.lastW, this.lastH);
+    // draw straight back into the buffer the resize just blanked
+    this.render(this.lastTime);
   }
 
   resize(w: number, h: number) {
@@ -391,12 +417,14 @@ export class InkRenderer {
     // the whole pipeline shrinks, post pass included — that pass is the expensive
     // half, so scaling only the scene target would save almost nothing
     const pr = Math.min(window.devicePixelRatio, QUALITY[this.quality].pr) * this.resScale;
-    this.renderer.setPixelRatio(pr);
-    this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     const rw = Math.max(2, Math.floor(w * pr));
     const rh = Math.max(2, Math.floor(h * pr));
+    // assigning the same size still blanks the canvas, so do not
+    if (this.renderer.domElement.width === rw && this.renderer.domElement.height === rh) return;
+    this.renderer.setPixelRatio(pr);
+    this.renderer.setSize(w, h, false);
     this.rt.setSize(rw, rh);
     this.postMat.uniforms.uRes.value.set(rw, rh);
   }
@@ -412,6 +440,7 @@ export class InkRenderer {
   }
 
   render(time: number) {
+    this.lastTime = time;
     shared.uTime.value = time;
     this.postMat.uniforms.uTime.value = time;
     this.postMat.uniforms.uHurt.value = this._hurt;

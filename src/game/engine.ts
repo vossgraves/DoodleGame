@@ -9,7 +9,19 @@ import { Streaks, type StreakKind, type StreakTarget } from "./streaks";
 import { Skills, sanitizeSkill } from "./skills";
 
 /** how long a fallen player's kit stays on the ground */
-const DROP_LIFE = 30;
+const DROP_LIFE = 18;
+
+export type AimAssist = "off" | "assist" | "auto";
+export const isAimAssist = (v: unknown): v is AimAssist => v === "off" || v === "assist" || v === "auto";
+/** How far off the crosshair a target can be and still be picked up, in radians. */
+const ASSIST_CONE = 0.2;
+const ASSIST_CONE_ADS = 0.12;
+const ASSIST_RANGE = 70;
+/** Turn rates, radians per second: a nudge, and a closing snap. */
+const ASSIST_PULL = 1.3;
+const ASSIST_SNAP = 9;
+/** `assist` stops helping this close in, so the last degree is still yours. */
+const ASSIST_DEADZONE = 0.03;
 /** seconds after respawning during which the loadout can still be changed */
 const RESPAWN_SWAP = 5;
 import { Player, WEAPONS, type Weapon, type WeaponKind } from "./player";
@@ -349,6 +361,8 @@ export class Game {
   /** fires once when a ranked match ends, with what it was worth */
   onRanked: ((delta: number, place: number, players: number) => void) | null = null;
   private gogglesOn = false;
+  /** how much help the crosshair gets while the trigger is down */
+  assist: AimAssist = "off";
   private killCamT = 0;
   private rankedDone = false;
 
@@ -384,6 +398,8 @@ export class Game {
   private feedId = 0;
   private running = false;
   private disposed = false;
+  private lastCssW = 0;
+  private lastCssH = 0;
   private onResize: () => void;
 
   constructor(
@@ -557,7 +573,14 @@ export class Game {
       const r = canvas.parentElement?.getBoundingClientRect() || canvas.getBoundingClientRect();
       const w = Math.max(1, r.width || window.innerWidth);
       const h = Math.max(1, r.height || window.innerHeight);
+      // A phone fires resize every time the URL bar slides, and each one blanks
+      // the canvas to the paper page behind it — which is the white flash. Only
+      // act on a size that actually moved.
+      if (Math.abs(w - this.lastCssW) < 1 && Math.abs(h - this.lastCssH) < 1) return;
+      this.lastCssW = w;
+      this.lastCssH = h;
       this.R.resize(w, h);
+      if (this.running) this.R.render(this.time);
     };
     window.addEventListener("resize", this.onResize);
     this.onResize();
@@ -619,6 +642,51 @@ export class Game {
     const p = pickSpawn(this.level.spawns, this.player.pos, this.level.snipers, kind);
     p.y = this.world.groundY(p.x, p.z) + 0.02;
     this.combat.spawn(kind, p);
+  }
+
+  /**
+   * Aim assist. `assist` turns you toward whatever is already near the crosshair
+   * while the trigger is down — a hand on the wrist, not a lock. `auto` closes
+   * the gap outright, which is the only way a thumb keeps up with a strafing
+   * bot. Both need a clear line, so it never drags you onto someone through a
+   * wall, and neither touches the shot itself: spread, falloff and penetration
+   * all still apply to where the barrel ends up pointing.
+   */
+  private aimAssist(dt: number) {
+    if (this.assist === "off" || !this.player.alive || this.player.weaponHidden) return;
+    if (!this.input.down("fire") || !this.player.weapon.def.isGun) return;
+    const eye = this.player.eye;
+    const fwd = this.player.forward;
+    const cone = this.player.aiming ? ASSIST_CONE_ADS : ASSIST_CONE;
+    let best: THREE.Vector3 | null = null;
+    let bestDot = Math.cos(cone);
+    const consider = (c: THREE.Vector3) => {
+      const to = new THREE.Vector3().subVectors(c, eye);
+      const dist = to.length();
+      if (dist < 0.5 || dist > ASSIST_RANGE) return;
+      to.divideScalar(dist);
+      const d = to.dot(fwd);
+      if (d <= bestDot) return;
+      if (!this.world.hasLineOfSight(eye, c)) return;
+      bestDot = d;
+      best = c;
+    };
+    for (const e of this.combat.enemies) if (e.alive) consider(e.center);
+    for (const r of this.combat.remotes) if (r.alive) consider(r.center);
+    if (!best) return;
+
+    const to = new THREE.Vector3().subVectors(best, eye).normalize();
+    const wantYaw = Math.atan2(-to.x, -to.z);
+    const wantPitch = Math.asin(clamp(to.y, -1, 1));
+    const auto = this.assist === "auto";
+    const rate = (auto ? ASSIST_SNAP : ASSIST_PULL) * dt;
+    const dead = auto ? 0 : ASSIST_DEADZONE;
+    let dy = (wantYaw - this.player.yaw) % (Math.PI * 2);
+    if (dy > Math.PI) dy -= Math.PI * 2;
+    if (dy < -Math.PI) dy += Math.PI * 2;
+    const dp = wantPitch - this.player.pitch;
+    if (Math.abs(dy) > dead) this.player.yaw += clamp(dy, -rate, rate);
+    if (Math.abs(dp) > dead) this.player.pitch = clamp(this.player.pitch + clamp(dp, -rate, rate), -1.5, 1.5);
   }
 
   private handleFire(w: Weapon, origin: THREE.Vector3, dir: THREE.Vector3, ads: boolean) {
@@ -773,6 +841,8 @@ export class Game {
 
     if (this.state === "playing" || this.state === "intermission") {
       this.time += dt;
+      // before the player reads its own yaw, so the shot goes where the assist put it
+      this.aimAssist(dt);
       this.player.update(dt);
       if (this.match.online) {
         this.match.update(dt);

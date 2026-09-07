@@ -206,6 +206,9 @@ export interface Pickup {
   weapon?: WeaponKind;
 }
 
+/** How many expiring drops may lie about at once before the oldest is cleared. */
+const MAX_TIMED_DROPS = 10;
+
 export class Enemy {
   def: TypeDef;
   hp: number;
@@ -425,14 +428,29 @@ export class Combat {
       weapon: opts.weapon,
       life: opts.life ?? Infinity,
     });
+
+    // A busy free-for-all drops two of these per death, so a timer alone still
+    // ends up carpeting the map. Oldest goes first, and only ever the ones that
+    // were always going to expire — battle royale's ground loot is the map.
+    if (opts.life !== undefined) {
+      const timed = this.pickups.filter((p) => p.alive && p.life !== Infinity);
+      for (let i = 0; i < timed.length - MAX_TIMED_DROPS; i++) this.killPickup(timed[i]);
+    }
+  }
+
+  private killPickup(p: Pickup) {
+    p.alive = false;
+    this.scene.remove(p.mesh);
+    p.mesh.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.geometry) m.geometry.dispose();
+    });
   }
 
   /** Remove a drop someone else claimed first. */
   removePickup(id: number) {
     for (const p of this.pickups) {
-      if (p.id !== id || !p.alive) continue;
-      p.alive = false;
-      this.scene.remove(p.mesh);
+      if (p.id === id && p.alive) this.killPickup(p);
     }
   }
 
@@ -706,8 +724,7 @@ export class Combat {
       if (pk.life !== Infinity) {
         pk.life -= dt;
         if (pk.life <= 0) {
-          pk.alive = false;
-          this.scene.remove(pk.mesh);
+          this.killPickup(pk);
           continue;
         }
         if (pk.life < 4) pk.mesh.visible = Math.floor(pk.life * 6) % 2 === 0;
@@ -726,8 +743,7 @@ export class Combat {
         } else {
           for (const w of player.weapons) if (w.def.isGun) w.addAmmo(Math.round(w.def.magSize * 1.4));
         }
-        pk.alive = false;
-        this.scene.remove(pk.mesh);
+        this.killPickup(pk);
         this.audio.pickup();
         this.onPickupTaken?.(pk.id);
       }

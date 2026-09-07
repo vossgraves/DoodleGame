@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Game, type GameState, type HudSnap } from "./game/engine";
+import { Game, isAimAssist, type AimAssist, type GameState, type HudSnap } from "./game/engine";
 import { MAPS, DEFAULT_MAP, type Mode } from "./game/level";
 import { WEAPONS, sanitizeLoadout, weaponDef, type WeaponKind } from "./game/player";
 import {
@@ -227,6 +227,11 @@ export default function App() {
   const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
   const [adsToggle, setAdsToggle] = useState(localStorage.getItem("doodle_ads_toggle") === "1");
+  // a thumb on glass needs the help; a mouse does not, so it starts off there
+  const [assist, setAssist] = useState<AimAssist>(() => {
+    const s = localStorage.getItem("doodle_assist");
+    return isAimAssist(s) ? s : isTouchDevice() ? "assist" : "off";
+  });
   const [hudPreset, setHudPreset] = useState(() => localStorage.getItem("doodle_hud") || "codm");
   const [hitInk, setHitInk] = useState(() => readInkSetting("doodle_hit_ink", 1));
   const [tracerInk, setTracerInk] = useState(() => readInkSetting("doodle_tracer_ink", 3));
@@ -266,6 +271,9 @@ export default function App() {
   rankedRef.current = ranked;
   const srRef = useRef(sr);
   srRef.current = sr;
+  // same reason: editing your name in the lobby used to rebuild the match
+  const nameRef = useRef(playerName);
+  nameRef.current = playerName;
   const killsRef = useRef(weaponKills);
   killsRef.current = weaponKills;
 
@@ -323,10 +331,11 @@ export default function App() {
     g.combat.hitInk = hitInk;
     g.combat.tracerInk = tracerInk;
     g.player.adsToggle = adsToggle;
+    g.assist = assist;
     g.setQuality(quality);
     g.setFpsCap(fpsCap);
     g.applySensitivity(sens);
-  }, [hitInk, tracerInk, quality, adsToggle, fpsCap, sens, runId, screen]);
+  }, [hitInk, tracerInk, quality, adsToggle, assist, fpsCap, sens, runId, screen]);
 
   // Resume a saved session if there is one. No backend just means stay signed out.
   useEffect(() => {
@@ -434,7 +443,7 @@ export default function App() {
     };
     g.onState = (s) => setGstate(s);
     g.onNet = () => setNetTick((n) => n + 1);
-    g.match.name = (playerName || "doodle").slice(0, 14);
+    g.match.name = (nameRef.current || "doodle").slice(0, 14);
     g.match.mapKey = mapKey;
     g.match.mode = matchMode;
     g.input.onLockChange = (l) => setLocked(l);
@@ -450,7 +459,7 @@ export default function App() {
       g.dispose();
       if (gameRef.current === g) gameRef.current = null;
     };
-  }, [screen, mode, mapKey, playerName, matchMode, runId]);
+  }, [screen, mode, mapKey, matchMode, runId]);
 
   useEffect(() => {
     const onVis = () => {
@@ -595,6 +604,11 @@ export default function App() {
           onAdsToggle={(v) => {
             setAdsToggle(v);
             localStorage.setItem("doodle_ads_toggle", v ? "1" : "0");
+          }}
+          assist={assist}
+          onAssist={(v) => {
+            setAssist(v);
+            localStorage.setItem("doodle_assist", v);
           }}
           quality={quality}
           onQuality={(q) => {
@@ -1144,6 +1158,8 @@ function Settings({
   onHudPreset,
   adsToggle,
   onAdsToggle,
+  assist,
+  onAssist,
   quality,
   onQuality,
   fps,
@@ -1174,6 +1190,8 @@ function Settings({
   onHudPreset: (v: string) => void;
   adsToggle: boolean;
   onAdsToggle: (v: boolean) => void;
+  assist: AimAssist;
+  onAssist: (v: AimAssist) => void;
   quality: Quality;
   onQuality: (q: Quality) => void;
   fps: number;
@@ -1231,6 +1249,23 @@ function Settings({
             <button className="ink-btn self-start text-base" onClick={() => onSens({ ...DEFAULT_SENS })}>
               reset sensitivity
             </button>
+            <div className="flex flex-col gap-2">
+              <span>aim assist</span>
+              <em className="text-base opacity-65">while the trigger is down, and never through a wall</em>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    ["off", "off"],
+                    ["assist", "help me"],
+                    ["auto", "auto aim"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button key={id} className={`gun-chip ${assist === id ? "on" : ""}`} onClick={() => onAssist(id)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <label className="flex items-center gap-3">
               <input type="checkbox" checked={adsToggle} onChange={(e) => onAdsToggle(e.target.checked)} />
               aim is a toggle, not a hold
