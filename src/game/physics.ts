@@ -54,6 +54,7 @@ export class World {
     let wallNormal: THREE.Vector3 | null = null;
 
     // vertical
+    const prevY = pos.y;
     pos.y += vel.y * dt;
     {
       const minx = pos.x - halfW,
@@ -64,7 +65,12 @@ export class World {
         maxz = pos.z + halfW;
       for (const b of this.boxes) {
         if (!this.overlaps(b, minx, miny, minz, maxx, maxy, maxz)) continue;
-        if (vel.y <= 0 && pos.y + height * 0.5 > b.maxy) {
+        // Land if the feet were at or above this surface *before* the step. The
+        // post-move test alone let anything falling fast enough clear the
+        // threshold in one frame and drop straight through the floor — which is
+        // how bots ended up under the map, apparently outside it.
+        const wasAbove = prevY + EPS >= b.maxy;
+        if (vel.y <= 0 && (wasAbove || pos.y + height * 0.5 > b.maxy)) {
           pos.y = b.maxy + EPS;
           vel.y = 0;
           onGround = true;
@@ -118,7 +124,9 @@ export class World {
     pos.x = Math.max(this.bounds.minX + halfW, Math.min(this.bounds.maxX - halfW, pos.x));
     pos.z = Math.max(this.bounds.minZ + halfW, Math.min(this.bounds.maxZ - halfW, pos.z));
     if (pos.y < -4) {
-      pos.y = 0;
+      // last resort: put them back on whatever solid ground is above, not at
+      // y=0, which could be inside a building
+      pos.y = this.groundY(pos.x, pos.z);
       vel.set(0, 0, 0);
       onGround = true;
     }
