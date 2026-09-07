@@ -747,6 +747,11 @@ canvas.game-canvas {
   width: 104px;
   height: 104px;
 }
+.minimap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .hud-root.touch .minimap {
   width: 84px;
   height: 84px;

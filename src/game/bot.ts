@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { World } from "./physics";
 import { clamp, rand } from "./math";
 import type { LocalSnapshotSource } from "./remote";
+import type { WeaponKind } from "./player";
 
 export type BotSkill = "recruit" | "regular" | "veteran" | "elite";
 
@@ -45,6 +46,10 @@ export const BOT_SKILLS: Record<BotSkill, SkillProfile> = {
 const SPREAD_PER_METRE = 1 / 14;
 /** They look for someone much further than they will shoot, so they still come to you. */
 const HUNT_MULTIPLIER = 2.8;
+/** How much a target already being hunted counts against picking it, per hunter. */
+const CROWD_PENALTY = 0.55;
+/** What being the last thing to shoot you is worth as a discount. */
+const REVENGE = 0.75;
 
 export const BOT_NAMES = [
   "Scribble", "Inkling", "Smudge", "Blot", "Doodle", "Sketch", "Crosshatch", "Margin",
@@ -69,6 +74,8 @@ export interface BotHooks {
   spawnPoints: () => THREE.Vector3[];
   /** false in free-for-all, where everyone shares team 0 and is still a target */
   teamPlay: () => boolean;
+  /** how many other bots are already on this target */
+  crowd: (id: string) => number;
 }
 
 const G = 26;
@@ -93,7 +100,6 @@ export class Bot implements LocalSnapshotSource {
   maxHp = 120;
   alive = true;
   onGround = false;
-  weaponIndex = 0;
   firing = false;
 
   // LocalSnapshotSource wants these; bots do not use them
@@ -107,10 +113,11 @@ export class Bot implements LocalSnapshotSource {
   lastHitBy: string | null = null;
   /** battle royale switches this off: a dead bot stays out */
   respawns = true;
-  /** what it leaves on the ground when it goes down */
-  dropWeapon = "rifle";
+  /** what it carries — drawn in its hands, and left on the ground when it falls */
+  weaponKind: WeaponKind = "rifle";
 
-  private targetId: string | null = null;
+  /** read by the host to spread the pack out; nothing else writes it */
+  targetId: string | null = null;
   private seenT = 0;
   private fireT = 0;
   private repickT = 0;
@@ -265,7 +272,13 @@ export class Bot implements LocalSnapshotSource {
       if (d > this.p.range * HUNT_MULTIPLIER) continue;
       // visible targets are hugely preferred over merely close ones
       const visible = this.hooks.world.hasLineOfSight(eye, c.center);
-      const score = d * (visible ? 1 : 4);
+      let score = d * (visible ? 1 : 4);
+      // Someone the pack has already picked is worth less. Without this the whole
+      // lobby converges on whoever is nearest the middle — which, in a free-for-
+      // all against a human, is always the human.
+      score *= 1 + CROWD_PENALTY * this.hooks.crowd(c.id);
+      // whoever just shot you is the obvious problem
+      if (c.id === this.lastHitBy) score *= REVENGE;
       if (score < bestScore) {
         bestScore = score;
         best = c;

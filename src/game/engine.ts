@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { InkRenderer, INK, QUALITY, isQuality, type Quality } from "./renderer";
+import { InkRenderer, INK, QUALITY, isQuality, defaultQuality, type Quality } from "./renderer";
 import { World } from "./physics";
 import { Input } from "./input";
 import { AudioSys } from "./audio";
@@ -21,6 +21,7 @@ import { encodeLocal } from "./remote";
 import { Combat, wavePlan, pickSpawn, type EnemyKind } from "./enemies";
 import { clamp, damp } from "./math";
 import { START_SR, srDelta, tierOf } from "./rank";
+import { BASE, loadSens, type Sens } from "./sens";
 
 export type GameState = "playing" | "paused" | "dead" | "intermission";
 
@@ -353,6 +354,21 @@ export class Game {
 
   setFpsCap(fps: number) {
     this.frameMin = fps > 0 ? 1000 / fps : 0;
+    this.R.setBudget(fps);
+  }
+
+  /** Live, so the sliders can be dragged with the match paused behind them. */
+  applySensitivity(s: Sens) {
+    const i = this.input;
+    i.mouseSens = BASE.mouse * (s.look / 100);
+    i.touchSens = BASE.touch * (s.touch / 100);
+    i.padSensX = BASE.padX * (s.pad / 100);
+    i.padSensY = BASE.padY * (s.pad / 100);
+    i.adsSens = { hip: 1, ads: s.ads / 100, scope: s.scope / 100, sniper: s.sniper / 100 };
+  }
+
+  setInvertY(v: boolean) {
+    this.input.invertY = v;
   }
 
   /** Apply a graphics preset to a running game. */
@@ -386,7 +402,7 @@ export class Game {
     this.mode = mode;
     this.mapKey = mapKey;
     const saved = localStorage.getItem("doodle_quality");
-    const quality: Quality = isQuality(saved) ? saved : "high";
+    const quality: Quality = isQuality(saved) ? saved : defaultQuality();
     this.R = new InkRenderer(canvas, quality);
     this.night = night || mode === "zombies";
     this.R.night = this.night ? 1 : 0;
@@ -439,7 +455,7 @@ export class Game {
             sliding: this.player.sliding,
             onGround: this.player.onGround,
             aiming: this.player.aiming,
-            weaponIndex: this.player.weaponIndex,
+            weaponKind: this.player.weapon.def.kind,
             weapon: this.player.weapon,
           },
           this.match.isFiring,
@@ -534,10 +550,8 @@ export class Game {
       look: () => this.input.look,
     });
     this.audio.setTune(mode === "zombies" ? "zombies" : "district");
-    const sens = Number(localStorage.getItem("doodle_sens") || 100);
-    const invert = localStorage.getItem("doodle_invert") === "1";
-    this.input.mouseSens = 0.0022 * (sens / 100);
-    this.input.invertY = invert;
+    this.applySensitivity(loadSens());
+    this.input.invertY = localStorage.getItem("doodle_invert") === "1";
 
     this.onResize = () => {
       const r = canvas.parentElement?.getBoundingClientRect() || canvas.getBoundingClientRect();
@@ -912,6 +926,8 @@ export class Game {
     this.R.setFlash(this.player.flashFx);
     this.R.setLowHp(this.hud.low ? 1 : 0);
     this.R.render(this.time);
+    // a paused frame is cheap and would talk the scaler back up for nothing
+    if (this.state === "playing") this.R.pace(raw);
     this.onHud?.(this.hud);
   };
 

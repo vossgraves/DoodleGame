@@ -5,9 +5,10 @@
 
 import * as THREE from "three";
 import { humanoid, TYPES, type BodyParts, type TypeDef } from "./enemies";
-import { INK } from "./renderer";
+import { INK, makeInkMaterial } from "./renderer";
 import { clamp, damp, rand } from "./math";
 import { EMOTES, armPose, emoteFromIndex, emoteIndex, type EmoteKind } from "./emotes";
+import { kindId, kindFromId, type WeaponKind } from "./player";
 
 /** Anything a bullet can find that is not an Enemy. */
 export interface NetTarget {
@@ -46,7 +47,8 @@ export interface LocalSnapshotSource {
   sliding: boolean;
   onGround: boolean;
   aiming: boolean;
-  weaponIndex: number;
+  /** what they are actually holding, not which slot it sits in */
+  weaponKind: WeaponKind;
   weapon: { blocking: boolean };
   /** bots never emote, so this is optional on the wire */
   emote?: EmoteKind | null;
@@ -68,7 +70,7 @@ export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
     +p.pos.z.toFixed(2),
     +p.yaw.toFixed(2),
     +p.pitch.toFixed(2),
-    p.weaponIndex,
+    kindId(p.weaponKind),
     flags,
     Math.round(p.hp),
     +p.vel.x.toFixed(1),
@@ -88,6 +90,64 @@ function shortestAngle(a: number, b: number) {
   if (d > Math.PI) d -= Math.PI * 2;
   if (d < -Math.PI) d += Math.PI * 2;
   return d;
+}
+
+/**
+ * The gun in someone else's hands. Not the first-person model — that one carries
+ * camos, charms and a working bolt, and ten of them would be ten times the
+ * geometry for something the size of a thumbnail at across-the-map range. This
+ * is the silhouette: enough to read what they are carrying and which way it
+ * points.
+ */
+const PROPS: Record<string, { len: number; thick: number; mag: number; stock: boolean; scope: number; bore: number }> = {
+  rifle: { len: 0.58, thick: 0.09, mag: 0.17, stock: true, scope: 0, bore: 0.3 },
+  carbine: { len: 0.46, thick: 0.09, mag: 0.15, stock: true, scope: 0, bore: 0.22 },
+  smg: { len: 0.34, thick: 0.08, mag: 0.22, stock: false, scope: 0, bore: 0.14 },
+  lmg: { len: 0.62, thick: 0.12, mag: 0.26, stock: true, scope: 0, bore: 0.36 },
+  shotgun: { len: 0.56, thick: 0.1, mag: 0, stock: true, scope: 0, bore: 0.34 },
+  sniper: { len: 0.66, thick: 0.09, mag: 0.12, stock: true, scope: 0.26, bore: 0.44 },
+  revolver: { len: 0.16, thick: 0.07, mag: 0, stock: false, scope: 0, bore: 0.14 },
+  pistol: { len: 0.16, thick: 0.06, mag: 0.13, stock: false, scope: 0, bore: 0.1 },
+};
+
+function weaponProp(kind: string, ink: number): THREE.Object3D | null {
+  const body = makeInkMaterial({ ink, shadeBias: -0.12 });
+  const dark = makeInkMaterial({ ink: INK.BLACK, shadeBias: -0.1 });
+  const g = new THREE.Group();
+  const add = (m: THREE.Mesh, x: number, y: number, z: number) => {
+    m.position.set(x, y, z);
+    g.add(m);
+    return m;
+  };
+
+  if (kind === "knife" || kind === "katana") {
+    const len = kind === "katana" ? 0.82 : 0.2;
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.05, len), body), 0, 0, len / 2 + 0.06);
+    add(new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.035, 0.12), dark), 0, 0, -0.02);
+    if (kind === "katana") add(new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.02, 0.02), dark), 0, 0, 0.05);
+    return g;
+  }
+
+  const p = PROPS[kind];
+  if (!p) return null;
+  add(new THREE.Mesh(new THREE.BoxGeometry(p.thick * 0.8, p.thick, p.len), body), 0, 0, p.len / 2);
+  add(new THREE.Mesh(new THREE.CylinderGeometry(p.thick * 0.22, p.thick * 0.22, p.bore, 5), dark), 0, 0, p.len + p.bore / 2).rotation.x =
+    Math.PI / 2;
+  add(new THREE.Mesh(new THREE.BoxGeometry(p.thick * 0.7, 0.13, 0.07), dark), 0, -0.07, 0.06);
+  if (p.mag) add(new THREE.Mesh(new THREE.BoxGeometry(p.thick * 0.6, p.mag, 0.07), dark), 0, -p.mag / 2 - 0.03, 0.2);
+  if (p.stock) add(new THREE.Mesh(new THREE.BoxGeometry(p.thick * 0.7, p.thick * 1.1, 0.2), body), 0, -0.02, -0.1);
+  if (p.scope) {
+    add(new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, p.scope, 6), dark), 0, p.thick * 0.75, 0.3).rotation.x =
+      Math.PI / 2;
+  }
+  return g;
+}
+
+function disposeTree(o: THREE.Object3D) {
+  o.traverse((n) => {
+    const m = n as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+  });
 }
 
 function nameSprite(name: string, ink: number): THREE.Sprite | null {
@@ -139,7 +199,7 @@ export class RemotePlayer implements NetTarget {
   aiming = false;
   onGround = true;
   firing = false;
-  weaponIndex = 0;
+  weaponKind: WeaponKind = "rifle";
 
   kills = 0;
   deaths = 0;
@@ -156,6 +216,9 @@ export class RemotePlayer implements NetTarget {
   /** which way this body happens to fall, picked once per death */
   private topple = 0;
   private limp = 0;
+  /** the right hand, oriented so a prop's +Z runs down the arm and out the muzzle */
+  private hand: THREE.Group;
+  private prop: THREE.Object3D | null = null;
 
   constructor(scene: THREE.Scene, id: string, name: string, team: number, ink: number) {
     this.scene = scene;
@@ -167,11 +230,27 @@ export class RemotePlayer implements NetTarget {
     this.parts = humanoid(def);
     this.parts.root.visible = false;
     scene.add(this.parts.root);
+    this.hand = new THREE.Group();
+    this.hand.position.y = -0.6;
+    this.hand.rotation.x = Math.PI / 2;
+    this.parts.rarm.add(this.hand);
+    this.setWeapon("rifle");
     this.tag = nameSprite(this.name, ink);
     if (this.tag) {
       this.tag.position.y = 2.15;
       this.parts.root.add(this.tag);
     }
+  }
+
+  private setWeapon(kind: WeaponKind) {
+    if (this.prop && this.weaponKind === kind) return;
+    this.weaponKind = kind;
+    if (this.prop) {
+      this.hand.remove(this.prop);
+      disposeTree(this.prop);
+    }
+    this.prop = weaponProp(kind, this.ink);
+    if (this.prop) this.hand.add(this.prop);
   }
 
   /** Feed a snapshot from this player's owner. */
@@ -181,7 +260,7 @@ export class RemotePlayer implements NetTarget {
     this.snapA = this.snapB || { p: p.clone(), yaw: snap[3], pitch: snap[4], t: now - 0.07 };
     this.snapB = { p, yaw: snap[3], pitch: snap[4], t: now };
 
-    this.weaponIndex = snap[5];
+    this.setWeapon(kindFromId(snap[5]));
     const f = snap[6];
     this.crouching = !!(f & F_CROUCH);
     this.sliding = !!(f & F_SLIDE);
@@ -311,10 +390,7 @@ export class RemotePlayer implements NetTarget {
 
   dispose() {
     this.scene.remove(this.parts.root);
-    this.parts.root.traverse((o) => {
-      const m = o as THREE.Mesh;
-      if (m.geometry) m.geometry.dispose();
-    });
+    disposeTree(this.parts.root);
     if (this.tag) this.tag.material.map?.dispose();
   }
 }

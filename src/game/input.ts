@@ -169,8 +169,23 @@ export class Input {
   my = 0;
   wheel = 0;
   mouseSens = 0.0022;
+  /**
+   * A finger drag covers far more screen than a mouse covers mousepad, so touch
+   * gets its own base rather than a fudge factor on the mouse one. At this value
+   * a drag across half the screen is about a quarter turn.
+   */
+  touchSens = 0.0045;
   padSensX = 3.4;
   padSensY = 2.6;
+  /**
+   * Aim sensitivity, as multipliers on the hipfire number. Splitting them by
+   * magnification is the point: what feels right down an iron sight is unusable
+   * through a sniper scope, because the same wrist flick covers eight times the
+   * arc on screen.
+   */
+  adsSens = { hip: 1, ads: 0.8, scope: 0.6, sniper: 0.42 };
+  /** how much the current sight magnifies, set by the player each frame */
+  aimZoom = 1;
   invertY = false;
   usingGamepad = false;
   gamepadIndex = -1;
@@ -303,6 +318,19 @@ export class Input {
     this.touchButtons = {};
   }
 
+  /**
+   * Which aim multiplier applies right now. The bands follow how the sight
+   * actually behaves rather than what it is called, so a 4x on a rifle and a 4x
+   * on a sniper feel the same.
+   */
+  private aimMul() {
+    const z = this.aimZoom;
+    if (z < 1.15) return this.adsSens.hip;
+    if (z < 1.9) return this.adsSens.ads;
+    if (z < 3.6) return this.adsSens.scope;
+    return this.adsSens.sniper;
+  }
+
   private getPad() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     if (this.gamepadIndex >= 0 && pads[this.gamepadIndex]) return pads[this.gamepadIndex];
@@ -335,12 +363,13 @@ export class Input {
       my = this.touchMove.y;
     }
 
-    let lx = -this.mx * this.mouseSens;
-    let ly = -this.my * this.mouseSens;
+    const aim = this.aimMul();
+    let lx = -this.mx * this.mouseSens * aim;
+    let ly = -this.my * this.mouseSens * aim;
     this.mx = 0;
     this.my = 0;
-    lx += -this.touchLookAcc.x * this.mouseSens * 1.15;
-    ly += -this.touchLookAcc.y * this.mouseSens * 1.15;
+    lx += -this.touchLookAcc.x * this.touchSens * aim;
+    ly += -this.touchLookAcc.y * this.touchSens * aim;
     this.touchLookAcc.x = 0;
     this.touchLookAcc.y = 0;
 
@@ -363,8 +392,8 @@ export class Input {
         else this.padHoldTime = 0;
         const accel = 1 + clamp((this.padHoldTime - 0.25) / 0.6, 0, 1) * 0.9;
         const curve = (v: number) => Math.sign(v) * Math.pow(Math.abs(v), 1.8);
-        lx += -curve(rx) * this.padSensX * accel * dt;
-        ly += -curve(ry) * this.padSensY * accel * dt;
+        lx += -curve(rx) * this.padSensX * accel * aim * dt;
+        ly += -curve(ry) * this.padSensY * accel * aim * dt;
         this.usingGamepad = true;
       } else this.padHoldTime = 0;
       for (const idx in PADMAP) {

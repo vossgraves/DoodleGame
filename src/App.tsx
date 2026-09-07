@@ -30,10 +30,11 @@ import {
 import { SCORE_TARGET, type MatchMode, type MatchNet } from "./game/match";
 import type { BotSkill } from "./game/bot";
 import { WeaponIcon } from "./WeaponIcon";
-import { QUALITY, isQuality, type Quality } from "./game/renderer";
+import { QUALITY, isQuality, defaultQuality, type Quality } from "./game/renderer";
 import * as account from "./game/account";
 import * as fullscreen from "./game/fullscreen";
 import * as hudpos from "./game/hudlayout";
+import { loadSens, saveSens, DEFAULT_SENS, type Sens } from "./game/sens";
 import { HUD_PIECES, type HudLayout } from "./game/hudlayout";
 
 type Screen = "menu" | "modes" | "howto" | "settings" | "loadout" | "game";
@@ -222,7 +223,7 @@ export default function App() {
   const [hud, setHud] = useState<HudSnap>(emptyHud);
   const [gstate, setGstate] = useState<GameState>("playing");
   const [touch, setTouch] = useState(false);
-  const [sens, setSens] = useState(Number(localStorage.getItem("doodle_sens") || 100));
+  const [sens, setSens] = useState<Sens>(loadSens);
   const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
   const [adsToggle, setAdsToggle] = useState(localStorage.getItem("doodle_ads_toggle") === "1");
@@ -231,9 +232,13 @@ export default function App() {
   const [tracerInk, setTracerInk] = useState(() => readInkSetting("doodle_tracer_ink", 3));
   const [quality, setQuality] = useState<Quality>(() => {
     const s = localStorage.getItem("doodle_quality");
-    return isQuality(s) ? s : "high";
+    return isQuality(s) ? s : defaultQuality();
   });
-  const [fpsCap, setFpsCap] = useState(() => Number(localStorage.getItem("doodle_fps") || 0));
+  // a phone rendering 120 frames it cannot sustain is just a hand warmer
+  const [fpsCap, setFpsCap] = useState(() => {
+    const s = localStorage.getItem("doodle_fps");
+    return s === null ? (isTouchDevice() ? 60 : 0) : Number(s);
+  });
   const [night, setNight] = useState(() => localStorage.getItem("doodle_night") === "1");
   const [fsWanted, setFsWanted] = useState(() => fullscreen.wanted());
   const [ranked, setRanked] = useState(() => localStorage.getItem("doodle_ranked") === "1");
@@ -319,7 +324,9 @@ export default function App() {
     g.combat.tracerInk = tracerInk;
     g.player.adsToggle = adsToggle;
     g.setQuality(quality);
-  }, [hitInk, tracerInk, quality, adsToggle, runId, screen]);
+    g.setFpsCap(fpsCap);
+    g.applySensitivity(sens);
+  }, [hitInk, tracerInk, quality, adsToggle, fpsCap, sens, runId, screen]);
 
   // Resume a saved session if there is one. No backend just means stay signed out.
   useEffect(() => {
@@ -399,7 +406,6 @@ export default function App() {
       rankedRef.current,
       srRef.current,
     );
-    g.setFpsCap(Number(localStorage.getItem("doodle_fps") || 0));
     g.onRanked = (delta) => {
       setSrSwing(delta);
       setSr((prev) => {
@@ -553,15 +559,18 @@ export default function App() {
         <Settings
           overlay={settingsOpen}
           sens={sens}
+          touch={touch}
           invert={invert}
           music={music}
           onSens={(v) => {
             setSens(v);
-            localStorage.setItem("doodle_sens", String(v));
+            saveSens(v);
+            gameRef.current?.applySensitivity(v);
           }}
           onInvert={(v) => {
             setInvert(v);
             localStorage.setItem("doodle_invert", v ? "1" : "0");
+            gameRef.current?.setInvertY(v);
           }}
           onMusic={(v) => {
             setMusic(v);
@@ -1084,8 +1093,43 @@ function InkPicker({ value, onChange, label }: { value: number; onChange: (v: nu
   );
 }
 
+function SensRow({
+  label,
+  hint,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: number;
+  min: number;
+  max: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="flex items-baseline justify-between">
+        <span>{label}</span>
+        <b>{value}%</b>
+      </span>
+      {hint && <em className="text-base opacity-65">{hint}</em>}
+      <input
+        className="ink-range"
+        type="range"
+        min={min}
+        max={max}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
+    </label>
+  );
+}
+
 function Settings({
   sens,
+  touch,
   invert,
   music,
   onSens,
@@ -1113,10 +1157,11 @@ function Settings({
   onSignedOut,
   onBack,
 }: {
-  sens: number;
+  sens: Sens;
+  touch: boolean;
   invert: boolean;
   music: boolean;
-  onSens: (n: number) => void;
+  onSens: (s: Sens) => void;
   onInvert: (v: boolean) => void;
   onMusic: (v: boolean) => void;
   hitInk: number;
@@ -1172,17 +1217,20 @@ function Settings({
 
         {tab === "controls" && (
           <div className="mt-6 flex flex-col gap-5 text-xl">
-            <label className="flex flex-col gap-2">
-              look sensitivity {sens}%
-              <input
-                className="ink-range"
-                type="range"
-                min={40}
-                max={200}
-                value={sens}
-                onChange={(e) => onSens(Number(e.target.value))}
-              />
-            </label>
+            <SensRow label={touch ? "look" : "mouse look"} hint="hipfire, the one everything else scales from"
+              value={touch ? sens.touch : sens.look} min={20} max={300}
+              onChange={(v) => onSens({ ...sens, [touch ? "touch" : "look"]: v })} />
+            <SensRow label="aim down sight" hint="iron sights and red dots"
+              value={sens.ads} min={10} max={150} onChange={(v) => onSens({ ...sens, ads: v })} />
+            <SensRow label="tactical scope" hint="the 2-3x optics"
+              value={sens.scope} min={10} max={150} onChange={(v) => onSens({ ...sens, scope: v })} />
+            <SensRow label="sniper scope" hint="the long glass, where a flick crosses the whole map"
+              value={sens.sniper} min={5} max={150} onChange={(v) => onSens({ ...sens, sniper: v })} />
+            <SensRow label="gamepad stick" hint=""
+              value={sens.pad} min={20} max={300} onChange={(v) => onSens({ ...sens, pad: v })} />
+            <button className="ink-btn self-start text-base" onClick={() => onSens({ ...DEFAULT_SENS })}>
+              reset sensitivity
+            </button>
             <label className="flex items-center gap-3">
               <input type="checkbox" checked={adsToggle} onChange={(e) => onAdsToggle(e.target.checked)} />
               aim is a toggle, not a hold
@@ -2188,83 +2236,110 @@ function LoadoutScreen({
 
 /**
  * Minimap. Up is always the way you are facing, so the whole map rotates around
- * you rather than the other way about. The walls ride in one rotated group, so
- * turning costs a transform rather than a pass over every rect.
+ * you rather than the other way about.
+ *
+ * Canvas rather than SVG: a map's footprint is a couple of hundred rects, and as
+ * SVG that was a couple of hundred DOM nodes rebuilt and re-diffed twenty times
+ * a second, right next to a 3D scene competing for the same phone.
  */
 function Minimap({ hud }: { hud: HudSnap }) {
-  const R = 50;
-  // how much world fits in the disc: closer in than the whole map, or a big map
-  // shrinks to an unreadable smudge
-  const half = Math.min(hud.radarHalf || 40, 34);
-  const scale = R / half;
-  const me = hud.radarSelf;
-  const fwdX = -Math.sin(me.yaw);
-  const fwdZ = -Math.cos(me.yaw);
-  const rgtX = Math.cos(me.yaw);
-  const rgtZ = -Math.sin(me.yaw);
+  const ref = useRef<HTMLCanvasElement | null>(null);
 
-  const blips = hud.radar
-    .map((b) => {
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const box = cv.getBoundingClientRect();
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.max(1, Math.round(box.width * dpr));
+    if (cv.width !== w) {
+      cv.width = w;
+      cv.height = w;
+    }
+    const g = cv.getContext("2d");
+    if (!g) return;
+    const R = w / 2;
+    // how much world fits in the disc: closer in than the whole map, or a big
+    // map shrinks to an unreadable smudge
+    const half = Math.min(hud.radarHalf || 40, 34);
+    const scale = (R - 3 * dpr) / half;
+    const me = hud.radarSelf;
+
+    g.clearRect(0, 0, w, w);
+    g.save();
+    g.translate(R, R);
+
+    g.beginPath();
+    g.arc(0, 0, R - 1.5 * dpr, 0, Math.PI * 2);
+    g.fillStyle = "rgba(246,243,230,0.82)";
+    g.fill();
+    g.strokeStyle = "#1a30c0";
+    g.lineWidth = 2.5 * dpr;
+    g.stroke();
+
+    g.save();
+    g.clip();
+    g.rotate(me.yaw);
+    g.scale(scale, scale);
+    g.translate(-me.x, -me.z);
+    const reach = half + 12;
+    g.lineWidth = 0.45 / scale * dpr;
+    g.strokeStyle = "rgba(26,48,192,0.75)";
+    for (const t of [true, false]) {
+      g.fillStyle = t ? "rgba(26,48,192,0.34)" : "rgba(26,48,192,0.14)";
+      g.beginPath();
+      for (const b of hud.radarWalls) {
+        if (b.tall !== t) continue;
+        if (Math.abs(b.x + b.w / 2 - me.x) > reach || Math.abs(b.z + b.d / 2 - me.z) > reach) continue;
+        g.rect(b.x, b.z, b.w, b.d);
+      }
+      g.fill();
+      g.stroke();
+    }
+    g.restore();
+
+    // north pip, then everyone else, then you — always centred, always up
+    g.strokeStyle = "#1a30c0";
+    g.lineWidth = 2.5 * dpr;
+    g.lineCap = "round";
+    g.beginPath();
+    g.moveTo(0, -R + 2 * dpr);
+    g.lineTo(0, -R + 11 * dpr);
+    g.stroke();
+
+    const fwdX = -Math.sin(me.yaw);
+    const fwdZ = -Math.cos(me.yaw);
+    const lim = (R - 5 * dpr) * (R - 5 * dpr);
+    g.lineWidth = 1 * dpr;
+    g.strokeStyle = "rgba(246,243,230,0.9)";
+    for (const b of hud.radar) {
       const dx = b.x - me.x;
       const dz = b.z - me.z;
-      return {
-        x: (dx * rgtX + dz * rgtZ) * scale,
-        y: -(dx * fwdX + dz * fwdZ) * scale,
-        hostile: b.hostile,
-      };
-    })
-    .filter((b) => b.x * b.x + b.y * b.y < R * R);
+      const px = (dx * Math.cos(me.yaw) + dz * -Math.sin(me.yaw)) * scale;
+      const py = -(dx * fwdX + dz * fwdZ) * scale;
+      if (px * px + py * py > lim) continue;
+      g.beginPath();
+      g.arc(px, py, 4.2 * dpr * (w / 208), 0, Math.PI * 2);
+      g.fillStyle = b.hostile ? "rgba(208,32,48,0.95)" : "rgba(26,48,192,0.6)";
+      g.fill();
+      g.stroke();
+    }
 
-  // only the walls that could land inside the disc are worth drawing
-  const reach = half + 12;
-  const walls = hud.radarWalls.filter(
-    (w) => Math.abs(w.x + w.w / 2 - me.x) < reach && Math.abs(w.z + w.d / 2 - me.z) < reach,
-  );
-  const spin = `rotate(${(me.yaw * 180) / Math.PI}) scale(${scale}) translate(${-me.x} ${-me.z})`;
+    const s = (w / 208) * dpr;
+    g.beginPath();
+    g.moveTo(0, -8 * s);
+    g.lineTo(6 * s, 7 * s);
+    g.lineTo(0, 3.5 * s);
+    g.lineTo(-6 * s, 7 * s);
+    g.closePath();
+    g.fillStyle = "#1a30c0";
+    g.fill();
+    g.stroke();
+    g.restore();
+  }, [hud]);
 
   return (
     <div className="minimap hud-bit">
-      <svg viewBox="-58 -58 116 116" width="100%" height="100%" aria-hidden="true">
-        <defs>
-          <clipPath id="mm-disc">
-            <circle cx="0" cy="0" r="52" />
-          </clipPath>
-        </defs>
-        <circle cx="0" cy="0" r="53" fill="rgba(246,243,230,0.82)" stroke="var(--ink)" strokeWidth="2.5" />
-        <g clipPath="url(#mm-disc)">
-          <g transform={spin}>
-            {walls.map((w, i) => (
-              <rect
-                key={i}
-                x={w.x}
-                y={w.z}
-                width={w.w}
-                height={w.d}
-                fill={w.tall ? "rgba(26,48,192,0.34)" : "rgba(26,48,192,0.14)"}
-                stroke="var(--ink)"
-                strokeWidth={w.tall ? 0.5 : 0.35}
-                strokeOpacity="0.75"
-                vectorEffect="non-scaling-stroke"
-              />
-            ))}
-          </g>
-        </g>
-        <line x1="0" y1="-53" x2="0" y2="-44" stroke="var(--ink)" strokeWidth="2.5" strokeLinecap="round" />
-        {blips.map((b, i) => (
-          <circle
-            key={i}
-            cx={b.x}
-            cy={b.y}
-            r="4.2"
-            fill={b.hostile ? "var(--red)" : "var(--ink)"}
-            stroke="rgba(246,243,230,0.9)"
-            strokeWidth="1"
-            opacity={b.hostile ? 0.95 : 0.6}
-          />
-        ))}
-        {/* you, always dead centre, always pointing up */}
-        <path d="M0 -8 L6 7 L0 3.5 L-6 7 Z" fill="var(--ink)" stroke="rgba(246,243,230,0.9)" strokeWidth="1" />
-      </svg>
+      <canvas ref={ref} aria-hidden="true" />
     </div>
   );
 }

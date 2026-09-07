@@ -124,7 +124,13 @@ float stripes(vec2 p, vec2 dir, float spacing, float width) {
 void main() {
   vec2 px = 1.0 / uRes;
   float sc = uRes.y / 900.0;
+  // The paper wobble is four noise lookups a pixel. On a phone that is the most
+  // expensive thing in the pass and the least visible, so CHEAP drops it.
+#ifdef CHEAP
+  vec2 wob = vec2(0.0);
+#else
   vec2 wob = vec2(vnoise(vUv * vec2(uRes.x / uRes.y, 1.0) * 6.0 + 11.3), vnoise(vUv * 6.0 + 37.0)) - 0.5;
+#endif
   vec2 suv = vUv + wob * 2.2 * sc * px;
   vec4 s = texture2D(tScene, suv);
   float z = texture2D(tDepth, suv).x;
@@ -140,7 +146,6 @@ void main() {
   float lap = abs(1.0 / linDepth(zl) + 1.0 / linDepth(zr) - 2.0 * iw)
             + abs(1.0 / linDepth(zu) + 1.0 / linDepth(zd) - 2.0 * iw);
   float edge = smoothstep(0.07, 0.32, lap / (iw + 1e-7));
-  vec2 n0 = s.ba * 2.0 - 1.0;
   vec2 nl = sl.ba * 2.0 - 1.0, nr = sr.ba * 2.0 - 1.0, nu = su.ba * 2.0 - 1.0, ndn = sd.ba * 2.0 - 1.0;
   float nEdge = length(nl - nr) + length(nu - ndn);
   edge = max(edge, smoothstep(0.35, 0.8, nEdge));
@@ -162,18 +167,25 @@ void main() {
       float w = 1.35 * sc;
       const vec2 d1 = vec2(0.7071, 0.7071);
       const vec2 d2 = vec2(-0.7071, 0.7071);
-      const vec2 d3 = vec2(0.2588, 0.9659);
       float h1 = stripes(hp, d1, sp, w);
       float h2 = stripes(hp, d2, sp * 1.15, w);
-      float h3 = stripes(hp, d3, sp * 0.72, w);
       hatch = h1 * smoothstep(0.62, 0.48, shade);
       hatch = max(hatch, h2 * smoothstep(0.42, 0.28, shade));
+      // the third pass only shows in the deepest shadow, so it is the one to lose
+#ifndef CHEAP
+      const vec2 d3 = vec2(0.2588, 0.9659);
+      float h3 = stripes(hp, d3, sp * 0.72, w);
       hatch = max(hatch, h3 * smoothstep(0.24, 0.12, shade));
+#endif
     }
   }
 
   vec3 paper = uPaper;
+#ifdef CHEAP
+  float grain = 0.0;
+#else
   float grain = (vnoise(vUv * uRes * 0.35) - 0.5) * 0.045;
+#endif
   float lines = abs(fract((vUv.y * uRes.y) / (28.0 * sc)) - 0.5);
   float ruled = 1.0 - smoothstep(0.42, 0.48, lines);
   paper += vec3(0.07, 0.1, 0.22) * ruled * 0.12;
@@ -200,8 +212,10 @@ void main() {
   // seeing anything at range is genuinely harder and the goggles are worth a slot.
   col = mix(col, col * vec3(0.30, 0.32, 0.52) + vec3(0.02, 0.025, 0.05), uNight * 0.92);
   col = mix(col, vec3(0.55, 0.08, 0.1), uLowHp * 0.18 * (1.0 - vig));
-  float fleck = step(0.996, hash21(floor(vUv * uRes * 0.25) + floor(uTime * 0.0)));
+#ifndef CHEAP
+  float fleck = step(0.996, hash21(floor(vUv * uRes * 0.25)));
   col = mix(col, inkColor(0.0), fleck * 0.25);
+#endif
 
   // Goggles: everything through one green channel, lifted hard, with the tube's
   // own vignette and a little sensor noise.
@@ -223,19 +237,33 @@ void main() {
 export type Quality = "low" | "medium" | "high" | "ultra";
 
 /**
- * `pr` caps the pixel ratio, which is what decides how crisp the ink lines are —
- * the old hardcoded 1.25 on touch meant a DPR-3 phone drew at ~40% of native and
- * everything looked soft. `fx` scales particle counts for the same reason in
- * reverse: cheap devices should not be pushing thousands of quads.
+ * `pr` caps the pixel ratio, which decides both how crisp the ink lines are and
+ * how much of the phone's battery the post pass eats — it is by far the biggest
+ * lever here, since the pass costs ten texture fetches per pixel. `fx` scales
+ * particle counts, and `cheap` compiles the pass without its noise lookups.
  */
-export const QUALITY: Record<Quality, { pr: number; fx: number }> = {
-  low: { pr: 0.7, fx: 0.35 },
-  medium: { pr: 1.25, fx: 0.7 },
-  high: { pr: 2.0, fx: 1 },
-  ultra: { pr: 3.0, fx: 1.4 },
+export const QUALITY: Record<Quality, { pr: number; fx: number; cheap: boolean }> = {
+  low: { pr: 0.85, fx: 0.3, cheap: true },
+  medium: { pr: 1.2, fx: 0.65, cheap: true },
+  high: { pr: 1.75, fx: 1, cheap: false },
+  ultra: { pr: 2.5, fx: 1.4, cheap: false },
 };
 
+/** Below about this many device pixels per CSS pixel the ink lines turn to mush. */
+const MIN_PR = 0.72;
+
 export const isQuality = (v: unknown): v is Quality => typeof v === "string" && v in QUALITY;
+
+/** A phone that draws at three device pixels per CSS pixel cooks itself for nothing. */
+export function defaultQuality(): Quality {
+  if (typeof navigator === "undefined") return "high";
+  const touch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
+  if (!touch) return "high";
+  // start somewhere reasonable and let the adaptive scaler shed what the phone
+  // cannot actually sustain, rather than guessing low and looking soft forever
+  const cores = navigator.hardwareConcurrency || 4;
+  return cores >= 4 ? "medium" : "low";
+}
 
 export class InkRenderer {
   renderer: THREE.WebGLRenderer;
@@ -253,6 +281,16 @@ export class InkRenderer {
   quality: Quality = "high";
   private lastW = 1;
   private lastH = 1;
+  /**
+   * Adaptive resolution. A fixed pixel ratio either wastes a fast phone or melts
+   * a slow one, and nobody reads a settings screen before their hands get hot —
+   * so the render target follows the frame time instead. Only the 3D pass
+   * shrinks; the HUD is DOM and stays sharp.
+   */
+  private resScale = 1;
+  private budget = 1 / 60;
+  private acc = 0;
+  private accN = 0;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality = "high") {
     this.renderer = new THREE.WebGLRenderer({
@@ -262,8 +300,6 @@ export class InkRenderer {
       powerPreference: "high-performance",
     });
     this.quality = quality;
-    // never supersample past the panel's own pixels
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[quality].pr));
     this.renderer.setClearColor(0x000000, 1);
     this.renderer.autoClear = true;
 
@@ -299,6 +335,7 @@ export class InkRenderer {
         uPaper: { value: new THREE.Vector3(0.965, 0.953, 0.902) },
         uInks: { value: INK_COLORS },
       },
+      defines: QUALITY[quality].cheap ? { CHEAP: "1" } : {},
       vertexShader: postVert,
       fragmentShader: postFrag,
       depthTest: false,
@@ -315,19 +352,53 @@ export class InkRenderer {
   setQuality(q: Quality) {
     if (!isQuality(q) || q === this.quality) return;
     this.quality = q;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, QUALITY[q].pr));
+    this.postMat.defines = QUALITY[q].cheap ? { CHEAP: "1" } : {};
+    this.postMat.needsUpdate = true;
+    this.resScale = 1;
     this.resize(this.lastW, this.lastH);
+  }
+
+  /** The frame time to aim at, in seconds. 0 means "whatever 60fps is". */
+  setBudget(fps: number) {
+    this.budget = 1 / (fps > 0 ? fps : 60);
+  }
+
+  /**
+   * Feed one frame's time in. Sustained overruns shed render resolution and
+   * sustained headroom takes it back, a step at a time so the picture never
+   * pulses; the target is only ever resized on a decision, not every frame.
+   */
+  pace(dt: number) {
+    this.acc += dt;
+    this.accN += 1;
+    if (this.accN < 30) return;
+    const mean = this.acc / this.accN;
+    this.acc = 0;
+    this.accN = 0;
+    const before = this.resScale;
+    const floor = Math.min(1, MIN_PR / Math.min(window.devicePixelRatio, QUALITY[this.quality].pr));
+    // Meeting the target is itself the evidence of headroom: under a frame cap
+    // the clock can never read faster than the cap, so a "well under budget"
+    // test would only ever shed resolution and never take it back.
+    if (mean > this.budget * 1.22) this.resScale = Math.max(floor, this.resScale - 0.1);
+    else if (mean <= this.budget * 1.05) this.resScale = Math.min(1, this.resScale + 0.05);
+    if (this.resScale !== before) this.resize(this.lastW, this.lastH);
   }
 
   resize(w: number, h: number) {
     this.lastW = w;
     this.lastH = h;
-    const pr = this.renderer.getPixelRatio();
+    // the whole pipeline shrinks, post pass included — that pass is the expensive
+    // half, so scaling only the scene target would save almost nothing
+    const pr = Math.min(window.devicePixelRatio, QUALITY[this.quality].pr) * this.resScale;
+    this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.rt.setSize(Math.floor(w * pr), Math.floor(h * pr));
-    this.postMat.uniforms.uRes.value.set(Math.floor(w * pr), Math.floor(h * pr));
+    const rw = Math.max(2, Math.floor(w * pr));
+    const rh = Math.max(2, Math.floor(h * pr));
+    this.rt.setSize(rw, rh);
+    this.postMat.uniforms.uRes.value.set(rw, rh);
   }
 
   setHurt(v: number) {

@@ -343,6 +343,13 @@ export const WEAPONS: { kind: WeaponKind; name: string; hint: string; isGun: boo
   ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "knife", "katana"] as WeaponKind[]
 ).map((k) => ({ kind: k, name: DEFS[k].name, hint: DEFS[k].hint, isGun: DEFS[k].isGun }));
 
+/**
+ * A weapon's place on the wire. The slot index used to travel instead, which
+ * told the receiver nothing — everyone's slot 2 is a different gun.
+ */
+export const kindId = (k: WeaponKind) => WEAPONS.findIndex((w) => w.kind === k);
+export const kindFromId = (i: number): WeaponKind => WEAPONS[i]?.kind ?? "rifle";
+
 export const GUN_KINDS = WEAPONS.filter((w) => w.isGun).map((w) => w.kind);
 export const MELEE_KINDS = WEAPONS.filter((w) => !w.isGun).map((w) => w.kind);
 export const DEFAULT_LOADOUT: WeaponKind[] = ["rifle", "shotgun", "sniper", "knife"];
@@ -1491,6 +1498,9 @@ export class Player {
     }
     this.aiming = this.adsOn && this.weapon.def.isGun;
     this.weapon.blocking = !this.weapon.def.isGun && this.adsOn;
+    // the sight's own magnification decides which aim sensitivity applies, and
+    // it follows the blend so the change arrives with the zoom rather than before
+    i.aimZoom = 1 + (82 / this.weapon.def.adsFov - 1) * this.adsBlend;
 
     if (i.pressed("slot1")) this.switchTo(0);
     if (i.pressed("slot2")) this.switchTo(1);

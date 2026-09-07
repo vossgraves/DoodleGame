@@ -12,6 +12,9 @@ import { Net, type PeerMeta } from "./net";
 import { RemotePlayer, encodeLocal, TEAM_INKS, FFA_INK, type Snapshot } from "./remote";
 import { Bot, BOT_NAMES, type BotCandidate, type BotSkill } from "./bot";
 import { raySphere, PEN_DAMAGE, type World } from "./physics";
+import type { WeaponKind } from "./player";
+
+const BOT_GUNS: WeaponKind[] = ["rifle", "carbine", "smg", "shotgun", "lmg", "revolver"];
 
 export type MatchMode = "ffa" | "tdm" | "br";
 export type MatchState = "offline" | "lobby" | "playing" | "over";
@@ -131,6 +134,8 @@ export class MatchNet {
   bots = new Map<string, Bot>();
   /** rebuilt once a tick; every bot reads it many times per frame */
   private candidateCache: BotCandidate[] = [];
+  /** how many bots are hunting each target, so the pack does not all pick one */
+  private aggro = new Map<string, number>();
   botSkill: BotSkill = "regular";
   /** how many players the host wants in the match, bots making up the shortfall */
   fillTo = 0;
@@ -424,8 +429,8 @@ export class MatchNet {
     this.scoreKill(by);
     const drops = this.dropIds();
     const at: [number, number, number] = [+bot.pos.x.toFixed(1), +bot.pos.y.toFixed(1), +bot.pos.z.toFixed(1)];
-    this.net.send("pdead", { killer: by, who: botId, at, gun: bot.dropWeapon, drops });
-    this.hooks.dropAt(at, bot.dropWeapon, drops);
+    this.net.send("pdead", { killer: by, who: botId, at, gun: bot.weaponKind, drops });
+    this.hooks.dropAt(at, bot.weaponKind, drops);
     if (by === this.net.id) {
       this.hooks.feed(`ERASED ${bot.name}`, 100);
       this.hooks.localKill();
@@ -460,10 +465,11 @@ export class MatchNet {
         shoot: (b, o, d, dmg, tid) => this.botShoot(b, o, d, dmg, tid),
         spawnPoints: () => this.hooks.spawnPoints(),
         teamPlay: () => this.mode === "tdm",
+        crowd: (tid) => this.aggro.get(tid) ?? 0,
       });
       bot.respawns = this.mode !== "br";
-      // varied kit, so what they drop is worth walking over
-      bot.dropWeapon = ["rifle", "carbine", "smg", "shotgun", "lmg", "revolver"][Math.floor(Math.random() * 6)];
+      // varied kit: it shows in their hands and it is what they leave behind
+      bot.weaponKind = BOT_GUNS[Math.floor(Math.random() * BOT_GUNS.length)];
       const pts = this.hooks.spawnPoints();
       if (pts.length) bot.spawn(pts[Math.floor(Math.random() * pts.length)].clone());
       this.bots.set(id, bot);
@@ -1013,6 +1019,10 @@ export class MatchNet {
     // the host runs the bots every frame, but only ships them at snapshot rate
     if (this.net.isHost && this.bots.size) {
       this.candidateCache = this.botCandidates();
+      this.aggro.clear();
+      for (const b of this.bots.values()) {
+        if (b.alive && b.targetId) this.aggro.set(b.targetId, (this.aggro.get(b.targetId) ?? 0) + 1);
+      }
       for (const b of this.bots.values()) b.update(dt);
     }
 
