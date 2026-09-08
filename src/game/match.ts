@@ -411,6 +411,7 @@ export class MatchNet {
         amount: Math.round(dmg),
         from: [+origin.x.toFixed(1), +origin.y.toFixed(1), +origin.z.toFixed(1)],
         by: bot.id,
+        gun: bot.weaponKind,
       });
     }
   }
@@ -659,6 +660,14 @@ export class MatchNet {
       this.leave();
     };
 
+    // Only say something once it has happened enough times to mean it. A single
+    // bad window is a backlog from a tab that was in the background, not a cheat.
+    net.onViolation = (pid, reason, repeated) => {
+      if (!repeated) return;
+      const nm = this.roster.get(pid)?.name ?? "someone";
+      this.hooks.feed(net.isHost ? `${nm} removed · ${reason}` : `${nm} is sending nonsense`, 0);
+    };
+
     net.on<{ reason?: string }>("refused", (d) => {
       this.status = d?.reason || "the lobby turned you away";
       this.leave();
@@ -896,12 +905,13 @@ export class MatchNet {
   // ---- per-frame -------------------------------------------------------
 
   /** Report a hit we landed on another player. */
-  reportHit(id: string, amount: number, fromPos: THREE.Vector3, crit: boolean) {
+  /** `gun` is what the receiver checks the damage against; "execute" is a finisher. */
+  reportHit(id: string, amount: number, fromPos: THREE.Vector3, crit: boolean, gun: WeaponKind | "execute" = "rifle") {
     if (!this.inMatch) return;
     // bots live on the host, so their damage goes there rather than to a peer
     if (this.roster.get(id)?.bot) {
       if (this.net.isHost) this.damageBot(id, amount, this.net.id!);
-      else this.net.send("botdmg", { bot: id, amount: Math.round(amount), by: this.net.id });
+      else this.net.send("botdmg", { bot: id, amount: Math.round(amount), by: this.net.id, gun });
       return;
     }
     this.net.sendTo(id, "pdmg", {
@@ -909,6 +919,7 @@ export class MatchNet {
       from: [+fromPos.x.toFixed(1), +fromPos.y.toFixed(1), +fromPos.z.toFixed(1)],
       by: this.net.id,
       crit,
+      gun,
     });
   }
 

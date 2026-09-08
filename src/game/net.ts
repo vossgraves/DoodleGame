@@ -11,6 +11,7 @@
 // full or closed lobby is skipped rather than hung on.
 
 import Peer, { type DataConnection } from "peerjs";
+import { Guard, validPeerMessage, gameplayAllowed } from "./guard";
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])$/;
 const isLocal = typeof location !== "undefined" && LOCAL_HOST.test(location.hostname);
@@ -96,8 +97,11 @@ export class Net {
   onPeerJoin: ((id: string, meta: PeerMeta) => void) | null = null;
   onPeerLeave: ((id: string) => void) | null = null;
   onDisconnect: (() => void) | null = null;
+  /** a peer said something it is not allowed to say */
+  onViolation: ((pid: string, reason: string, repeated: boolean) => void) | null = null;
 
   private handlers = new Map<string, Handler>();
+  private guard = new Guard();
   private leaving = false;
 
   get active() {
@@ -157,6 +161,7 @@ export class Net {
   private drop(pid: string) {
     if (this.leaving || !this.conns.has(pid)) return;
     this.conns.delete(pid);
+    this.guard.forget(pid);
     if (this.isHost) {
       this.onPeerLeave?.(pid);
       this.broadcast("leave", { id: pid });
@@ -167,16 +172,45 @@ export class Net {
   }
 
   private route(msg: NetMessage, from: string) {
+    // `from` is the connection a message actually arrived on — never the `from`
+    // field inside it, which a peer can set to anybody it likes.
+    if (!this.vet(msg, from)) return;
     // clients can address each other; the host forwards on their behalf
     if (this.isHost && msg.to && msg.to !== this.id) {
       const c = this.conns.get(msg.to);
-      if (c?.open) c.send(msg);
+      if (c?.open) c.send({ t: msg.t, d: msg.d, to: msg.to, from });
       return;
     }
     if (this.isHost && msg.relay) {
       for (const [pid, c] of this.conns) if (pid !== from && c.open) c.send({ t: msg.t, d: msg.d, from });
     }
-    this.emit(msg.t, msg.d, msg.from || from);
+    this.emit(msg.t, msg.d, from);
+  }
+
+  /**
+   * Everything a peer sends goes through here. A client also vets what the host
+   * sends it for shape, but grants it the host-only types — in a match with no
+   * server the host is the referee, and a client that will not hear it cannot
+   * play.
+   */
+  private vet(msg: NetMessage, from: string): boolean {
+    if (!this.isHost && from === this.hostId) return true;
+    if (validPeerMessage(msg) && gameplayAllowed(this.guard, msg, from, this.id || "", (pid, why) => this.flag(pid, why)))
+      return true;
+    this.flag(from, typeof msg?.t === "string" ? `malformed ${msg.t}` : "malformed message");
+    return false;
+  }
+
+  private flag(pid: string, reason: string) {
+    const repeated = this.guard.repeated(pid, reason);
+    this.onViolation?.(pid, reason, repeated);
+    // only the host can act on it, and only once it has happened again and again
+    if (repeated && this.isHost && this.conns.has(pid)) {
+      const c = this.conns.get(pid);
+      if (c?.open) c.send({ t: "refused", d: { reason: "dropped: " + reason }, from: this.id });
+      c?.close();
+      this.drop(pid);
+    }
   }
 
   private keepAlive(peer: Peer) {

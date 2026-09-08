@@ -184,6 +184,10 @@ canvas.game-canvas {
   position: absolute;
   background: var(--red);
   border-radius: 2px;
+  /* the arms ease apart as the gun climbs instead of jittering frame to frame */
+  transition:
+    top 0.06s,
+    left 0.06s;
 }
 .ch-t {
   width: 3px;
@@ -225,6 +229,44 @@ canvas.game-canvas {
 }
 .crosshair.ads {
   opacity: 0;
+}
+
+/* Each gun reads at a glance: a shotgun throws a wide short spread, a sniper is
+   a bare dot because the arms tell you nothing once the scope is up, and a
+   pistol sits tighter than a rifle. */
+.crosshair.ch-shotgun i {
+  height: 8px;
+  width: 5px;
+  border-radius: 3px;
+}
+.crosshair.ch-shotgun .ch-l,
+.crosshair.ch-shotgun .ch-r {
+  height: 5px;
+  width: 8px;
+}
+.crosshair.ch-sniper .ch-t,
+.crosshair.ch-sniper .ch-b,
+.crosshair.ch-sniper .ch-l,
+.crosshair.ch-sniper .ch-r {
+  display: none;
+}
+.crosshair.ch-sniper .ch-dot {
+  width: 5px;
+  height: 5px;
+  left: -2.5px;
+  top: -2.5px;
+}
+.crosshair.ch-pistol i,
+.crosshair.ch-revolver i {
+  width: 2px;
+  height: 9px;
+}
+.crosshair.ch-pistol .ch-l,
+.crosshair.ch-pistol .ch-r,
+.crosshair.ch-revolver .ch-l,
+.crosshair.ch-revolver .ch-r {
+  width: 9px;
+  height: 2px;
 }
 
 .scope {

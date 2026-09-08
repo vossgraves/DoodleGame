@@ -36,12 +36,14 @@ src/game/
   bot.ts               bot AI for PvP
   match.ts             lobby, roster, teams, zone, drops
   net.ts remote.ts     PeerJS transport and remote-player interpolation
+  guard.ts             what a peer is allowed to say, and how often
   attachments.ts       gunsmith rails and their stat multipliers
   cosmetics.ts         camos, charms, stickers and what unlocks them
   skills.ts            operator skills
   streaks.ts           scorestreaks
   grapple.ts           the swing grapple
   renderer.ts          the ink shader and the post pass
+  sens.ts hudlayout.ts look sensitivity bands, draggable HUD positions
   audio.ts input.ts    WebAudio synthesis, keyboard/mouse/touch/gamepad
 api/                   Vercel functions: auth, profile, stats, leaderboard
 db/schema.sql          the Neon schema
@@ -51,11 +53,21 @@ db/schema.sql          the Neon schema
 
 **Rendering.** Every material is `makeInkMaterial`. It writes shade into red and
 an ink id into green; the post pass in `renderer.ts` turns that into hatching on
-paper. Nothing uses a normal three.js material.
+paper. Nothing uses a normal three.js material. The scene target is 8-bit, so
+the ink id is stored as a fraction of `INK_SLOTS` — write it raw and every pen
+past red clamps to red. The post pass starts from paper and adds only hatching
+and edges, both fading with depth; a flat base tint turns the whole world one
+colour. A map can hand `setStyle` its own paper, ruling and six inks.
 
 **Multiplayer** is host-authoritative P2P over PeerJS. There is no game server —
 the lobby code *is* the host's peer id. Damage to a player is owner-authoritative:
 the shooter sends `pdmg` and the victim's own client applies it.
+
+**Cheating** is answered on the wire, not on the cheater's machine — they own
+that runtime. `guard.ts` shape-checks every peer message in `Net.route`, refuses
+host-only types from peers, caps damage per weapon and rate-limits the rest.
+Never infer cheating from aim or movement, and never act on one bad second: it
+takes three separate bad periods over twelve seconds to drop anyone.
 
 **Weapons** are data. `RAW_DEFS` in `player.ts` holds the ballistics, `HANDLING`
 the feel, and `applyBuild` folds the gunsmith's multipliers over the top. Adding

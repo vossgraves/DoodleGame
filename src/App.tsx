@@ -151,6 +151,28 @@ function isTouchDevice() {
   return "ontouchstart" in window || navigator.maxTouchPoints > 0;
 }
 
+/** A HUD with something in every slot, so it can be arranged outside a match. */
+const previewHud = (): HudSnap => ({
+  ...emptyHud(),
+  hp: 84,
+  mag: "24",
+  reserve: "/140",
+  nades: 2,
+  slots: sanitizeLoadout(null).map((kind, i) => ({
+    name: weaponDef(kind).name,
+    kind,
+    ammo: weaponDef(kind).isGun ? "24/140" : "slash",
+    active: i === 0,
+    empty: false,
+  })),
+  radarWalls: [
+    { x: -8, z: -8, w: 6, d: 5, tall: true },
+    { x: 3, z: 2, w: 7, d: 4, tall: false },
+    { x: -4, z: 7, w: 4, d: 6, tall: true },
+  ],
+  skillCharge: 0.6,
+});
+
 /** Portrait cannot fit a stick, a fire button and a readable HUD side by side. */
 function RotatePrompt() {
   return (
@@ -600,6 +622,7 @@ export default function App() {
             setHudPreset(v);
             localStorage.setItem("doodle_hud", v);
           }}
+          onMoveHud={() => setHudEdit(true)}
           adsToggle={adsToggle}
           onAdsToggle={(v) => {
             setAdsToggle(v);
@@ -771,17 +794,6 @@ export default function App() {
               onMenu={toMenu}
             />
           )}
-          {hudEdit && (
-            <HudEditor
-              layout={hudLayout}
-              onChange={(l) => {
-                setHudLayout(l);
-                if (Object.keys(l).length) hudpos.save(l);
-                else hudpos.clear();
-              }}
-              onClose={() => setHudEdit(false)}
-            />
-          )}
           {gstate === "dead" && (
             <DeadOverlay
               hud={hud}
@@ -789,6 +801,28 @@ export default function App() {
               onMenu={toMenu}
             />
           )}
+        </>
+      )}
+
+      {/* Arranging the HUD works from the menu as well as mid-match; outside one
+          there is no HUD to drag, so a stand-in is put up to drag instead. */}
+      {hudEdit && (
+        <>
+          {screen !== "game" && (
+            <>
+              <HUD hud={previewHud()} hidden={false} touch preset={hudPreset} />
+              <TouchControls gameRef={gameRef} />
+            </>
+          )}
+          <HudEditor
+            layout={hudLayout}
+            onChange={(l) => {
+              setHudLayout(l);
+              if (Object.keys(l).length) hudpos.save(l);
+              else hudpos.clear();
+            }}
+            onClose={() => setHudEdit(false)}
+          />
         </>
       )}
     </div>
@@ -1156,6 +1190,7 @@ function Settings({
   overlay,
   hudPreset,
   onHudPreset,
+  onMoveHud,
   adsToggle,
   onAdsToggle,
   assist,
@@ -1188,6 +1223,7 @@ function Settings({
   overlay?: boolean;
   hudPreset: string;
   onHudPreset: (v: string) => void;
+  onMoveHud: () => void;
   adsToggle: boolean;
   onAdsToggle: (v: boolean) => void;
   assist: AimAssist;
@@ -1328,6 +1364,12 @@ function Settings({
                   </button>
                 ))}
               </div>
+              <button className="ink-btn self-start text-base" onClick={onMoveHud}>
+                move the hud
+              </button>
+              <span className="text-base opacity-60">
+                drag any piece where your thumb actually is; it survives a rotation and a different phone
+              </span>
             </div>
             <InkPicker label="hit colour" value={hitInk} onChange={onHitInk} />
             <InkPicker label="fire projection" value={tracerInk} onChange={onTracerInk} />
@@ -2655,7 +2697,9 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
         <div className="cy" />
       </div>
       <div
-        className={`crosshair ${hud.melee ? "melee" : ""} ${hud.ads ? "ads" : ""}`}
+        className={`crosshair ch-${hud.slots.find((s) => s.active)?.kind ?? "rifle"} ${hud.melee ? "melee" : ""} ${
+          hud.ads ? "ads" : ""
+        }`}
         style={{ ["--s" as string]: `${hud.spread}px` }}
       >
         <i className="ch-t" />

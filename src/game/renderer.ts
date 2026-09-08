@@ -12,6 +12,21 @@ const INK_COLORS = [
   new THREE.Vector3(0.9, 0.4, 0.66),
 ];
 
+/**
+ * A map's own stationery: the paper it is drawn on, whether that paper is ruled
+ * or gridded, and which six pens were used. A jungle has no business being drawn
+ * in the same school-exercise-book blue as a street.
+ */
+export interface PaperStyle {
+  paper: [number, number, number];
+  /** 0 ruled with a margin, 1 graph paper */
+  grid?: 0 | 1;
+  inks?: [number, number, number][];
+}
+
+const DEFAULT_INKS = INK_COLORS.map((c) => c.toArray() as [number, number, number]);
+export const DEFAULT_STYLE: PaperStyle = { paper: [0.965, 0.953, 0.902], grid: 0, inks: DEFAULT_INKS };
+
 const shared = {
   uLightDir: { value: new THREE.Vector3(0.38, 0.82, 0.42).normalize() },
   uTime: { value: 0 },
@@ -29,8 +44,12 @@ void main() {
 }
 `;
 
+/** Ink ids ride in one 8-bit channel, so they are stored as a fraction of this. */
+const INK_SLOTS = 8;
+
 const inkFrag = /* glsl */ `
 precision highp float;
+#define INK_SCALE ${(1 / INK_SLOTS).toFixed(6)}
 uniform float uInk;
 uniform float uFill;
 uniform float uShadeScale;
@@ -43,7 +62,9 @@ void main() {
   float ndl = dot(n, uLightDir) * 0.5 + 0.5;
   float shade = clamp(ndl * uShadeScale + uShadeBias, 0.0, 1.0);
   if (uFill > 0.5) shade = -1.0;
-  gl_FragColor = vec4(shade, uInk, n.x * 0.5 + 0.5, n.y * 0.5 + 0.5);
+  // The scene target is 8-bit, so anything above 1.0 clamps. Writing the raw ink
+  // id meant every pen past red came out as red — the whole world was two colours.
+  gl_FragColor = vec4(shade, uInk * INK_SCALE, n.x * 0.5 + 0.5, n.y * 0.5 + 0.5);
 }
 `;
 
@@ -75,6 +96,7 @@ void main() {
 
 const postFrag = /* glsl */ `
 precision highp float;
+#define INK_SLOTS ${INK_SLOTS}.0
 varying vec2 vUv;
 uniform sampler2D tScene;
 uniform sampler2D tDepth;
@@ -87,8 +109,11 @@ uniform float uFlash;
 uniform float uLowHp;
 uniform float uNight;
 uniform float uNvg;
+uniform float uGrid;
 uniform vec3 uPaper;
 uniform vec3 uInks[6];
+uniform mat4 uInvProj;
+uniform mat4 uInvView;
 
 float hash21(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
@@ -105,8 +130,8 @@ float linDepth(float z) {
   float zn = z * 2.0 - 1.0;
   return 2.0 * uNear * uFar / (uFar + uNear - zn * (uFar - uNear));
 }
-vec3 inkColor(float id) {
-  int i = int(id + 0.5);
+vec3 inkColor(float stored) {
+  int i = int(stored * INK_SLOTS + 0.5);
   if (i <= 0) return uInks[0];
   if (i == 1) return uInks[1];
   if (i == 2) return uInks[2];
@@ -162,23 +187,54 @@ void main() {
   if (!sky) {
     if (shade < 0.0) hatch = 1.0;
     else {
-      vec2 hp = gl_FragCoord.xy + wob * 6.0 * sc;
-      float sp = 8.0 * sc;
-      float w = 1.35 * sc;
+      vec2 hp; float sp, w;
+      bool near = d < 2.0;
+      if (near) {
+        // the held weapon rides with the camera, so for it the screen is the stable frame
+        hp = gl_FragCoord.xy + wob * 6.0 * sc;
+        sp = 8.0 * sc;
+        w = 1.35 * sc;
+      } else {
+        // Strokes are laid out in world units on whichever pair of axes the surface
+        // faces, so the pattern stays put on a wall as you walk past instead of
+        // crawling across it. Spacing steps in powers of two with distance, which
+        // holds the on-screen density steady rather than collapsing into moire.
+        vec4 clip = vec4(vUv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);
+        vec4 vpos = uInvProj * clip; vpos /= vpos.w;
+        vec3 wpos = (uInvView * vec4(vpos.xyz, 1.0)).xyz;
+        vec2 nxy = s.ba * 2.0 - 1.0;
+        vec3 nView = vec3(nxy, sqrt(max(0.0, 1.0 - dot(nxy, nxy))));
+        vec3 wn = normalize(mat3(uInvView) * nView);
+        vec3 an = abs(wn);
+        hp = an.y > max(an.x, an.z) ? wpos.xz : (an.x > an.z ? wpos.zy : wpos.xy);
+        float lod = exp2(floor(log2(max(1e-4, (0.0165 * d) / 0.16))));
+        sp = 0.16 * lod;
+        w = sp * 0.17;
+#ifndef CHEAP
+        hp += (vnoise(hp * (2.5 / sp)) - 0.5) * sp * 0.4;
+#endif
+      }
       const vec2 d1 = vec2(0.7071, 0.7071);
       const vec2 d2 = vec2(-0.7071, 0.7071);
       float h1 = stripes(hp, d1, sp, w);
       float h2 = stripes(hp, d2, sp * 1.15, w);
-      hatch = h1 * smoothstep(0.62, 0.48, shade);
-      hatch = max(hatch, h2 * smoothstep(0.42, 0.28, shade));
+      hatch = h1 * smoothstep(0.64, 0.5, shade);
+      hatch = max(hatch, h2 * smoothstep(0.42, 0.32, shade));
       // the third pass only shows in the deepest shadow, so it is the one to lose
 #ifndef CHEAP
       const vec2 d3 = vec2(0.2588, 0.9659);
-      float h3 = stripes(hp, d3, sp * 0.72, w);
-      hatch = max(hatch, h3 * smoothstep(0.24, 0.12, shade));
+      float h3 = stripes(hp, d3, sp * 0.7, w);
+      hatch = max(hatch, h3 * smoothstep(0.24, 0.14, shade));
 #endif
+      // deep shadow goes solid, except on the gun in your hands: filling that in
+      // loses the line work you spend the whole match looking at
+      if (!near) hatch = max(hatch, smoothstep(0.12, 0.0, shade) * 0.9);
     }
   }
+  // Ink thins out with distance. Without this every far building stays as saturated
+  // as the wall in front of you and the whole page reads as one flat blue.
+  float fade = mix(1.0, 0.30, smoothstep(14.0, 110.0, d));
+  float fadeE = mix(1.0, 0.45, smoothstep(30.0, 220.0, linDepth(zmin)));
 
   vec3 paper = uPaper;
 #ifdef CHEAP
@@ -186,28 +242,36 @@ void main() {
 #else
   float grain = (vnoise(vUv * uRes * 0.35) - 0.5) * 0.045;
 #endif
-  float lines = abs(fract((vUv.y * uRes.y) / (28.0 * sc)) - 0.5);
-  float ruled = 1.0 - smoothstep(0.42, 0.48, lines);
-  paper += vec3(0.07, 0.1, 0.22) * ruled * 0.12;
-  float margin = smoothstep(0.072, 0.068, vUv.x) * smoothstep(0.055, 0.06, vUv.x);
-  paper = mix(paper, mix(paper, vec3(0.82, 0.18, 0.22), 0.55), margin * 0.8);
+  if (uGrid < 0.5) {
+    float lines = abs(fract((vUv.y * uRes.y) / (28.0 * sc)) - 0.5);
+    float ruled = 1.0 - smoothstep(0.42, 0.48, lines);
+    paper += vec3(0.07, 0.1, 0.22) * ruled * 0.12;
+    float margin = smoothstep(0.072, 0.068, vUv.x) * smoothstep(0.055, 0.06, vUv.x);
+    paper = mix(paper, mix(paper, vec3(0.82, 0.18, 0.22), 0.55), margin * 0.8);
+  } else {
+    // graph paper, for a map drawn in a field notebook rather than a school one
+    float gs = 20.0 * sc;
+    float gx = abs(fract(gl_FragCoord.x / gs) - 0.5) * gs;
+    float gy = abs(fract(gl_FragCoord.y / gs) - 0.5) * gs;
+    float g1 = 1.0 - smoothstep(0.35 * sc, 1.15 * sc, gx);
+    float g2 = 1.0 - smoothstep(0.35 * sc, 1.15 * sc, gy);
+    paper = mix(paper, vec3(0.58, 0.76, 0.63), max(g1, g2) * 0.19);
+  }
   paper += grain;
 
+  // Start from the page and put ink on it. The old pass tinted every lit surface
+  // before it hatched anything, which is what turned the whole world blue.
   vec3 col = paper;
   if (!sky) {
-    vec3 ink = inkColor(inkId);
-    float fillAmt = hatch * 0.55;
-    col = mix(paper, ink, 0.18 + fillAmt);
-    col = mix(col, ink, edge * 0.92);
-    if (shade < 0.0) col = mix(paper, ink, 0.72);
-  } else {
-    col = paper;
+    col = mix(col, inkColor(s.g), hatch * 0.72 * fade);
+    col = mix(col, inkColor(inkId) * 0.92, clamp(edge, 0.0, 1.0) * fadeE);
   }
 
   col = mix(col, vec3(0.78, 0.12, 0.16), uHurt * 0.45 * (0.35 + 0.65 * length(vUv - 0.5)));
   col = mix(col, vec3(1.0, 0.95, 0.85), uFlash * 0.55);
+  // a whisper of a vignette; the old one dimmed the page by a fifth everywhere
   float vig = smoothstep(0.95, 0.35, length((vUv - 0.5) * vec2(1.15, 1.0)));
-  col *= 0.78 + 0.22 * vig;
+  col *= 0.96 + 0.04 * vig;
   // Night dims the page towards a cold blue-grey rather than tinting it, so
   // seeing anything at range is genuinely harder and the goggles are worth a slot.
   col = mix(col, col * vec3(0.30, 0.32, 0.52) + vec3(0.02, 0.025, 0.05), uNight * 0.92);
@@ -336,8 +400,11 @@ export class InkRenderer {
         uLowHp: { value: 0 },
         uNight: { value: 0 },
         uNvg: { value: 0 },
+        uGrid: { value: 0 },
         uPaper: { value: new THREE.Vector3(0.965, 0.953, 0.902) },
         uInks: { value: INK_COLORS },
+        uInvProj: { value: new THREE.Matrix4() },
+        uInvView: { value: new THREE.Matrix4() },
       },
       defines: QUALITY[quality].cheap ? { CHEAP: "1" } : {},
       vertexShader: postVert,
@@ -362,6 +429,14 @@ export class InkRenderer {
     this.ceiling = 1;
     this.sinceChange = 0;
     this.resize(this.lastW, this.lastH);
+  }
+
+  /** Hand the pass a map's stationery; nothing given restores the district's. */
+  setStyle(s: PaperStyle | null) {
+    const st = s ?? DEFAULT_STYLE;
+    this.postMat.uniforms.uPaper.value.fromArray(st.paper);
+    this.postMat.uniforms.uGrid.value = st.grid ?? 0;
+    for (let i = 0; i < INK_COLORS.length; i++) INK_COLORS[i].fromArray(st.inks?.[i] ?? DEFAULT_INKS[i]);
   }
 
   /** The frame time to aim at, in seconds. 0 means "whatever 60fps is". */
@@ -449,6 +524,10 @@ export class InkRenderer {
     this.postMat.uniforms.uNvg.value = this.nvg;
     this.postMat.uniforms.uNear.value = this.camera.near;
     this.postMat.uniforms.uFar.value = this.camera.far;
+    // the hatch pass rebuilds world position from depth, so it needs both inverses
+    this.camera.updateMatrixWorld();
+    this.postMat.uniforms.uInvProj.value.copy(this.camera.projectionMatrixInverse);
+    this.postMat.uniforms.uInvView.value.copy(this.camera.matrixWorld);
     this.renderer.setRenderTarget(this.rt);
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);

@@ -20,6 +20,8 @@ export interface NetTarget {
   ink: number;
   /** which way they are facing — an execution has to come from behind */
   forward: THREE.Vector3;
+  /** play the finisher on this body, if it is one that can */
+  execute?: () => void;
 }
 
 export const TEAM_INKS = [INK.BLUE, INK.RED] as const;
@@ -84,6 +86,8 @@ export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
 const INTERP_DELAY = 0.08;
 const STAND_H = 1.72;
 const CROUCH_H = 1.08;
+/** How long the finisher owns the body for. */
+const SNAP_DUR = 0.85;
 
 function shortestAngle(a: number, b: number) {
   let d = (b - a) % (Math.PI * 2);
@@ -216,6 +220,14 @@ export class RemotePlayer implements NetTarget {
   /** which way this body happens to fall, picked once per death */
   private topple = 0;
   private limp = 0;
+  /** counts down through the neck snap; the body cannot fall until it is done */
+  private snapT = 0;
+
+  /** Taken from behind at contact range. The head goes first, then the body. */
+  execute() {
+    this.snapT = SNAP_DUR;
+    this.topple = 0;
+  }
   /** the right hand, oriented so a prop's +Z runs down the arm and out the muzzle */
   private hand: THREE.Group;
   private prop: THREE.Object3D | null = null;
@@ -299,8 +311,12 @@ export class RemotePlayer implements NetTarget {
       // if we have run past the newest snapshot, carry on along their velocity
       const late = tt - this.snapB.t;
       if (late > 0) want.addScaledVector(this.vel, Math.min(late, 0.35));
-      // a big gap means a teleport or a respawn, not a stutter
-      if (want.distanceToSquared(this.pos) > 36) this.pos.copy(want);
+      // a big gap means a teleport or a respawn, not a stutter — and a body that
+      // has respawned is done being executed
+      if (want.distanceToSquared(this.pos) > 36) {
+        this.pos.copy(want);
+        this.snapT = 0;
+      }
       else this.pos.lerp(want, 1 - Math.exp(-dt * 22));
       this.yaw = A.yaw + shortestAngle(A.yaw, this.snapB.yaw) * k;
       this.pitch = A.pitch + (this.snapB.pitch - A.pitch) * k;
@@ -331,8 +347,27 @@ export class RemotePlayer implements NetTarget {
     const s = Math.sin(this.phase);
     const c = Math.cos(this.phase);
 
-    P.eyes.visible = this.alive;
-    P.xeyes.visible = !this.alive;
+    P.eyes.visible = this.alive && this.snapT <= 0;
+    P.xeyes.visible = !this.alive || this.snapT > 0;
+
+    // The finisher outranks everything, including a stale snapshot still
+    // claiming this body is upright — the owner has not caught up yet, and the
+    // one who did it should not watch the neck un-snap.
+    if (this.snapT > 0) {
+      // The head wrenches round first and holds there, and only once it has does
+      // the body remember to fall. Both at once just looks like any other death.
+      this.snapT = Math.max(0, this.snapT - dt);
+      const t = 1 - this.snapT / SNAP_DUR;
+      const turn = Math.min(1, t * 4);
+      P.head.rotation.y = turn * 2.5;
+      P.head.rotation.z = turn * 0.6;
+      P.torso.rotation.y = damp(P.torso.rotation.y, 0.5, 9, dt);
+      P.larm.rotation.x = damp(P.larm.rotation.x, 0.3, 10, dt);
+      P.rarm.rotation.x = damp(P.rarm.rotation.x, 0.2, 10, dt);
+      P.root.rotation.x = damp(P.root.rotation.x, t > 0.55 ? Math.PI / 2.1 : 0, 9, dt);
+      if (this.tag) this.tag.visible = false;
+      return;
+    }
 
     if (!this.alive) {
       // topple rather than slump: pick a direction once, then go limp
@@ -351,6 +386,9 @@ export class RemotePlayer implements NetTarget {
     }
     this.topple = 0;
     this.limp = 0;
+    this.snapT = 0;
+    P.head.rotation.y = damp(P.head.rotation.y, 0, 10, dt);
+    P.torso.rotation.y = damp(P.torso.rotation.y, 0, 10, dt);
     P.root.rotation.x = damp(P.root.rotation.x, 0, 8, dt);
     P.root.rotation.z = damp(P.root.rotation.z, 0, 8, dt);
     if (this.tag) this.tag.visible = true;

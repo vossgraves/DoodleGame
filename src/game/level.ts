@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { World } from "./physics";
-import { INK, makeInkMaterial } from "./renderer";
+import { INK, makeInkMaterial, type PaperStyle } from "./renderer";
 import { rand } from "./math";
 
 /** district/zombies are the PvE wave modes; arena is player-vs-player. */
@@ -24,6 +24,8 @@ export interface MapDef {
   /** arena half-extent; the perimeter wall sits here */
   half: number;
   playerStart: [number, number];
+  /** the stationery this map is drawn on; nothing means the district's */
+  style?: PaperStyle;
   build: (k: MapKit) => void;
 }
 
@@ -1196,7 +1198,177 @@ const island: MapDef = {
   },
 };
 
-export const MAPS: MapDef[] = [district, rooftops, schoolyard, subway, sketchpad, bazaar, island];
+/**
+ * The one map not drawn in a school exercise book. Felt tip on a field
+ * notebook: warm paper, a green grid, sepia where the district has graphite,
+ * and a teal that reads as water rather than biro.
+ *
+ * It plays vertically. Every canopy is a floor you can stand on and every trunk
+ * is climbable, so the fight moves up into the branches and back down through
+ * the temple rather than around one street.
+ */
+const jungle: MapDef = {
+  key: "jungle",
+  name: "DOODLE JUNGLE",
+  blurb: "canopies, vines and a temple somebody drew from memory",
+  half: 40,
+  playerStart: [0, 30],
+  style: {
+    paper: [0.955, 0.948, 0.865],
+    grid: 1,
+    inks: [
+      [0.06, 0.3, 0.52],
+      [0.86, 0.12, 0.2],
+      [0.34, 0.21, 0.1],
+      [0.95, 0.55, 0.1],
+      [0.1, 0.55, 0.22],
+      [0.9, 0.32, 0.55],
+    ],
+  },
+  build: (k) => {
+    k.arena(40, 20);
+
+    // ---- the river, cut across the map on a lazy diagonal -------------------
+    // A curve rather than a straight channel, so neither half of the map is a
+    // clean firing line down it.
+    const riverX = (z: number) => -6 + z * 0.34 + Math.sin(z * 0.09) * 5;
+    for (let z = -38; z <= 38; z += 3) {
+      const x = riverX(z);
+      k.box(x, 0.02, z, 9 + Math.sin(z * 0.21) * 2, 0.06, 3.1, {
+        ink: INK.BLUE,
+        noCollide: true,
+        fill: true,
+      });
+    }
+    // stepping stones: the only dry crossings, so they are worth holding
+    for (const [x, z] of [
+      [riverX(-20) - 2.8, -20],
+      [riverX(-19), -19],
+      [riverX(-18) + 2.8, -18],
+      [riverX(8) - 2.6, 8],
+      [riverX(9), 9],
+      [riverX(10) + 2.6, 10],
+    ] as [number, number][]) {
+      k.box(x, 0, z, 1.6, 0.5, 1.6, { ink: INK.GREEN });
+    }
+
+    // ---- trees: a trunk you can climb and a canopy you can hold -------------
+    const tree = (x: number, z: number, top: number, crown: number) => {
+      const trunk = 0.9 + crown * 0.06;
+      k.box(x, 0, z, trunk, top - 0.6, trunk, { ink: INK.BLACK });
+      // buttress roots double as the first step up
+      for (const [dx, dz] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ] as [number, number][]) {
+        k.box(x + dx * (trunk * 0.9), 0, z + dz * (trunk * 0.9), 1.1, 0.75, 1.1, { ink: INK.BLACK });
+      }
+      // the canopy floor, then leaf blobs sunk into it so they read as cover
+      k.deck(x, top, z, crown * 1.5, crown * 1.5, INK.GREEN);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + x * 0.01;
+        const r = i === 0 ? 0 : crown * 0.5;
+        k.mesh(
+          new THREE.SphereGeometry(crown * (i === 0 ? 0.62 : 0.4), 9, 6).scale(1, 0.42, 1),
+          INK.GREEN,
+          x + Math.cos(a) * r,
+          top + 0.55,
+          z + Math.sin(a) * r,
+        );
+      }
+      // vines hang where you can see them from below; they are scenery, not rope
+      for (const a of [0.8, 3.4]) {
+        k.box(x + Math.cos(a) * crown * 0.8, top - 6, z + Math.sin(a) * crown * 0.8, 0.16, 12, 0.16, {
+          ink: INK.GREEN,
+          noCollide: true,
+        });
+      }
+    };
+    tree(-26, -24, 9.5, 6.5);
+    tree(24, -20, 11, 7);
+    tree(-22, 22, 10, 6);
+    tree(27, 25, 8.5, 6);
+    tree(-32, 2, 12.5, 7.5);
+    tree(8, -34, 9, 5.5);
+
+    // a branch bridging two crowns, so the canopy is a route and not six islands
+    k.box(-1, 9.6, -22, 26, 0.5, 1.6, { ink: INK.BLACK });
+    k.box(-24, 9.8, -1, 1.6, 0.5, 24, { ink: INK.BLACK });
+
+    // ---- the temple, squat and open, holding the middle ---------------------
+    k.box(0, 0, 0, 20, 3.2, 20, { ink: INK.ORANGE });
+    k.box(0, 3.2, 0, 16, 3.0, 16, { ink: INK.ORANGE });
+    k.deck(0, 6.2, 0, 12, 12, INK.PINK);
+    // a hollow doorway through the base on both axes
+    for (const [x, z, w, d] of [
+      [0, -8.4, 4.4, 3.4],
+      [0, 8.4, 4.4, 3.4],
+    ] as [number, number, number, number][]) {
+      k.box(x, 2.4, z, w, 0.8, d, { ink: INK.ORANGE });
+    }
+    k.stairs(0, -13, 1, "z", 10, 0.34, 0.5, 5);
+    k.stairs(0, 13, -1, "z", 10, 0.34, 0.5, 5);
+    for (const s of [-1, 1]) {
+      for (const t of [-1, 1]) k.box(s * 7, 6.2, t * 7, 1.1, 3.4, 1.1, { ink: INK.PINK });
+    }
+
+    // ---- ruins and undergrowth for ground cover -----------------------------
+    for (const [x, z, w, h, d] of [
+      [-14, -10, 5, 1.4, 1.2],
+      [15, 9, 4.5, 1.3, 1.2],
+      [-9, 16, 3.4, 1.5, 1.1],
+      [12, -14, 4, 1.2, 1.4],
+      [-30, -8, 3, 1.6, 1.2],
+      [30, 12, 3.6, 1.3, 1.1],
+      [-18, 32, 4.2, 1.2, 1.3],
+      [20, -32, 3.8, 1.4, 1.2],
+    ] as [number, number, number, number, number][]) {
+      k.box(x, 0, z, w, h, d, { ink: INK.ORANGE, jitter: 0.03 });
+    }
+    for (const [x, z] of [
+      [-34, -34],
+      [34, -34],
+      [-34, 34],
+      [34, 34],
+      [-6, -30],
+      [6, 30],
+      [-30, 14],
+      [30, -14],
+      [16, 20],
+      [-16, -20],
+    ] as [number, number][]) {
+      k.mesh(new THREE.SphereGeometry(1.5, 8, 6).scale(1, 0.6, 1), INK.GREEN, x, 0.5, z);
+    }
+
+    for (const [x, z] of [
+      [0, 30],
+      [0, -30],
+      [-30, 0],
+      [30, 0],
+      [-26, -26],
+      [26, -26],
+      [-26, 26],
+      [26, 26],
+      [14, 0],
+      [-14, 0],
+    ] as [number, number][]) {
+      k.spawn(x, z);
+    }
+    k.sniper(0, 6.8, 0);
+    k.sniper(-32, 12.9, 2);
+    k.sniper(24, 11.4, -20);
+    k.sniper(-26, 9.9, -24);
+
+    k.pickup(0, 6.8, 0);
+    k.pickup(-22, 0.6, 22);
+    k.pickup(24, 0.6, -20);
+    k.pickup(0, 0.6, 18);
+  },
+};
+
+export const MAPS: MapDef[] = [district, rooftops, schoolyard, subway, sketchpad, bazaar, island, jungle];
 export const DEFAULT_MAP = district.key;
 
 export function getMap(key: string): MapDef {

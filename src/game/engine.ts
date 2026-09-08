@@ -425,6 +425,8 @@ export class Game {
     this.input = new Input(canvas);
     this.best = Number(localStorage.getItem(mode === "zombies" ? "doodle_zbest" : "doodle_best") || 0);
     this.level = buildLevel(this.R.scene, this.world, mode, mapKey, this.night);
+    // a map can bring its own paper and pens; night overrides both anyway
+    this.R.setStyle(getMap(mapKey).style ?? null);
     this.combat = new Combat(this.world, this.R.scene, this.audio);
     const readInk = (key: string, fallback: number) => {
       const v = Number(localStorage.getItem(key));
@@ -525,13 +527,19 @@ export class Game {
     // a ranked lobby fills with bots picked for your tier, not the house default
     if (ranked) this.match.botSkill = tierOf(sr).bots;
     // a hit on another player is reported to them; their client applies it
-    this.combat.onRemoteHit = (t, dmg, crit) => this.match.reportHit(t.id, dmg, this.player.eye, crit);
+    // the weapon rides along so the receiving end can tell an honest sniper
+    // round from a rifle claiming to do 200
+    this.combat.onRemoteHit = (t, dmg, crit) =>
+      this.match.reportHit(t.id, dmg, this.player.eye, crit, this.player.weapon.def.kind);
     // a finisher: no health bar survives it, and it reads as its own event
     this.combat.onRemoteExecute = (t) => {
-      this.match.reportHit(t.id, 500, this.player.eye, true);
+      this.match.reportHit(t.id, 500, this.player.eye, true, "execute");
       const name = this.match.roster.get(t.id)?.name ?? "them";
       this.addScore(150, `EXECUTED ${name}`);
-      this.hitstopT = Math.max(this.hitstopT, 0.16);
+      // the body plays it out where you are standing; the hitstop is long enough
+      // that you actually watch the neck go
+      t.execute?.();
+      this.hitstopT = Math.max(this.hitstopT, 0.3);
       this.player.shake += 0.5;
       this.player.fovKick.kick(120);
       this.audio.crit();
