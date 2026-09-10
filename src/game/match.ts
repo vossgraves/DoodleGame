@@ -1,12 +1,3 @@
-// An online match: lobby, roster, scoring, and the snapshot pump.
-//
-// Authority is split the way a serverless P2P game has to split it:
-//   - the host owns the roster, team assignment, match start/end and the score table
-//   - each client owns its own body — damage dealt to you is sent *to* you and your
-//     client applies it, so nobody can kill you on your screen without your agreement
-//
-// That trades cheat-resistance for not needing a server, which is the whole point.
-
 import * as THREE from "three";
 import { Net, type PeerMeta } from "./net";
 import { RemotePlayer, encodeLocal, TEAM_INKS, FFA_INK, type Snapshot } from "./remote";
@@ -19,11 +10,9 @@ const BOT_GUNS: WeaponKind[] = ["rifle", "carbine", "smg", "shotgun", "lmg", "re
 export type MatchMode = "ffa" | "tdm" | "br";
 export type MatchState = "offline" | "lobby" | "playing" | "over";
 
-/** kills to win; battle royale is last-one-standing instead */
 export const SCORE_TARGET: Record<MatchMode, number> = { ffa: 25, tdm: 50, br: 0 };
 export const RESPAWN_DELAY = 3.0;
 
-/** how long you get before each closure, and what fraction of the map is left after */
 const ZONE_PHASES = [
   { wait: 30, factor: 0.7 },
   { wait: 26, factor: 0.52 },
@@ -31,7 +20,6 @@ const ZONE_PHASES = [
   { wait: 20, factor: 0.22 },
   { wait: 18, factor: 0.1 },
 ];
-/** how long quick play hunts for a real lobby before falling back to bots */
 export const MATCHMAKING_MS = 40_000;
 const ZONE_CLOSE_SPEED = 2.6;
 const ZONE_DPS = [3, 5, 8, 12, 18, 25];
@@ -52,7 +40,6 @@ export interface ZoneState {
   wait: number;
   active: boolean;
 }
-/** 20 snapshots a second is plenty for figures this size */
 const SNAPSHOT_HZ = 20;
 const DROP_AFTER = 12;
 
@@ -62,13 +49,9 @@ export interface RosterRow {
   team: number;
   kills: number;
   deaths: number;
-  /** longest run of kills without dying, for the end-of-match card */
   best?: number;
-  /** kills since last death, tracked by the host to feed `best` */
   run?: number;
-  /** battle royale only: eliminated, no respawn coming */
   out?: boolean;
-  /** filled by the host rather than a person */
   bot?: boolean;
 }
 
@@ -76,43 +59,30 @@ export interface ChatLine {
   id: number;
   from: string;
   text: string;
-  /** sent to one side only */
   team: boolean;
   side: number;
 }
 
 export interface MatchHooks {
   scene: THREE.Scene;
-  /** encode the local player right now */
   snapshot: () => Snapshot;
-  /** apply incoming damage to the local player */
   hurt: (amount: number, from: THREE.Vector3 | null) => void;
-  /** put the local player back in the world */
   respawn: (pos: THREE.Vector3) => void;
   spawnPoints: () => THREE.Vector3[];
   localPos: () => THREE.Vector3;
   localAlive: () => boolean;
-  /** half-extent of the current map, used to size the opening zone */
   mapExtent: () => number;
   spawnLoot: (items: LootItem[]) => void;
-  /** bots need the collision world to walk and shoot through */
   world: World;
-  /** the local player as something a bot can aim at */
   localBody: () => { pos: THREE.Vector3; center: THREE.Vector3; headPos: THREE.Vector3; alive: boolean };
-  /** decoys the local player has out, which bots should shoot at instead */
   decoys?: () => { id: string; pos: THREE.Vector3; center: THREE.Vector3; alive: boolean }[];
-  /** true while the local player cannot be picked as a target at all */
   hidden?: () => boolean;
-  /** scatter what a fallen player left behind; ids are shared so drops match everywhere */
   dropAt: (pos: [number, number, number], weapon: string | null, ids: [number, number]) => void;
   removeDrop: (id: number) => void;
-  /** the gun currently in the local player's hands, for their death drop */
   localWeapon: () => string | null;
   feed: (text: string, pts: number) => void;
   announce: (main: string, sub?: string) => void;
-  /** roster/score/state changed — refresh any UI */
   changed: () => void;
-  /** we got the kill; feeds the scorestreak counter */
   localKill: () => void;
 }
 
@@ -130,14 +100,10 @@ export class MatchNet {
 
   zone: ZoneState = { cx: 0, cz: 0, r: 0, target: 0, phase: 0, wait: 0, active: false };
 
-  /** host only: the AI players filling out the match */
   bots = new Map<string, Bot>();
-  /** rebuilt once a tick; every bot reads it many times per frame */
   private candidateCache: BotCandidate[] = [];
-  /** how many bots are hunting each target, so the pack does not all pick one */
   private aggro = new Map<string, number>();
   botSkill: BotSkill = "regular";
-  /** how many players the host wants in the match, bots making up the shortfall */
   fillTo = 0;
 
   private sendT = 0;
@@ -172,20 +138,16 @@ export class MatchNet {
     return this.roster.get(this.net.id || "")?.team ?? 0;
   }
 
-  /** Team of a peer; -1 when unknown. Used for friendly-fire checks. */
   teamOf(id: string) {
     return this.roster.get(id)?.team ?? -1;
   }
 
-  /** In TDM you cannot hurt your own side. */
   canHurt(id: string) {
     if (this.mode !== "tdm") return true;
     const mine = this.myTeam;
     const theirs = this.teamOf(id);
     return theirs < 0 || theirs !== mine;
   }
-
-  // ---- lobby lifecycle -------------------------------------------------
 
   private meta(): PeerMeta {
     return { name: this.name };
@@ -217,10 +179,6 @@ export class MatchNet {
     return this.net.code!;
   }
 
-  /**
-   * Hunt for a real lobby, and if nobody answers inside the matchmaking window,
-   * open one of our own and fill it with bots rather than leaving you waiting.
-   */
   async quickPlay(onStatus?: (s: string) => void): Promise<"joined" | "bots"> {
     const deadline = Date.now() + MATCHMAKING_MS;
     let tries = 0;
@@ -231,7 +189,6 @@ export class MatchNet {
         await this.quickJoin();
         return "joined";
       } catch {
-        /* nobody answered that round; keep knocking until the deadline */
       }
       if (Date.now() >= deadline) break;
       await new Promise((r) => setTimeout(r, 1200));
@@ -254,7 +211,6 @@ export class MatchNet {
     this.hooks.changed();
   }
 
-  /** Host only: balance teams and drop everyone into the map. */
   start() {
     if (!this.net.isHost || this.state === "playing") return;
     if (this.fillTo > 0) this.fillWithBots();
@@ -273,7 +229,6 @@ export class MatchNet {
     this.beginMatch(assign[this.net.id!] ?? 0, loot);
   }
 
-  /** Scatter supplies around every spawn so a drop-in has something to find. */
   private makeLoot(): LootItem[] {
     const kinds: LootKind[] = ["ammo", "ammo", "hp", "nade"];
     const out: LootItem[] = [];
@@ -307,7 +262,6 @@ export class MatchNet {
       for (const r of this.roster.values()) r.team = 0;
       return;
     }
-    // alternate so the sides stay even as people join and leave
     let t = 0;
     for (const r of this.roster.values()) r.team = t++ % 2;
   }
@@ -343,9 +297,6 @@ export class MatchNet {
     this.hooks.changed();
   }
 
-  // ---- bots --------------------------------------------------------------
-
-  /** Everything a bot could shoot at: us, the real remotes, and the other bots. */
   private botCandidates(): BotCandidate[] {
     const out: BotCandidate[] = [];
     const myId = this.net.id;
@@ -361,12 +312,10 @@ export class MatchNet {
         headPos: body.headPos,
       });
     }
-    // decoys stand in for you: same team, so they draw exactly your enemies
     for (const d of this.hooks.decoys?.() ?? []) {
       out.push({ id: d.id, team: myTeam, alive: d.alive, pos: d.pos, center: d.center, headPos: d.center });
     }
     for (const [id, r] of this.remotes) {
-      // a bot's own RemotePlayer is presentation only; its Bot is the real thing
       if (this.bots.has(id)) continue;
       out.push({
         id,
@@ -383,10 +332,6 @@ export class MatchNet {
     return out;
   }
 
-  /**
-   * Resolve a bot's shot properly rather than assuming it connects — the aim
-   * error in its skill profile is only meaningful if a miss can actually miss.
-   */
   private botShoot(bot: Bot, origin: THREE.Vector3, dir: THREE.Vector3, damage: number, targetId: string) {
     const t = this.candidateCache.find((c) => c.id === targetId);
     if (!t || !t.alive) return;
@@ -399,8 +344,6 @@ export class MatchNet {
     if (trace.penAt !== null && at > trace.penAt) dmg *= PEN_DAMAGE;
 
     if (targetId === this.net.id) {
-      // bots hurt us in-process, so nothing sets this the way `pdmg` would —
-      // without it the kill cam has no shooter and never opens
       this.lastHitBy = bot.id;
       this.lastHitFrom = origin.clone();
       this.hooks.hurt(dmg, origin.clone());
@@ -416,7 +359,6 @@ export class MatchNet {
     }
   }
 
-  /** Host-side: apply damage to a bot and announce it if that killed them. */
   private damageBot(botId: string, amount: number, by: string) {
     const bot = this.bots.get(botId);
     if (!bot || !bot.alive) return;
@@ -452,7 +394,6 @@ export class MatchNet {
     return a < 0 || b < 0 || a !== b;
   }
 
-  /** Top the match up to fillTo with bots, balancing teams as it goes. */
   fillWithBots() {
     if (!this.net.isHost) return;
     const want = Math.max(0, this.fillTo - this.roster.size);
@@ -469,7 +410,6 @@ export class MatchNet {
         crowd: (tid) => this.aggro.get(tid) ?? 0,
       });
       bot.respawns = this.mode !== "br";
-      // varied kit: it shows in their hands and it is what they leave behind
       bot.weaponKind = BOT_GUNS[Math.floor(Math.random() * BOT_GUNS.length)];
       const pts = this.hooks.spawnPoints();
       if (pts.length) bot.spawn(pts[Math.floor(Math.random() * pts.length)].clone());
@@ -480,7 +420,6 @@ export class MatchNet {
     if (want > 0) this.broadcastLobby();
   }
 
-  /** Drop one bot so an arriving human can take its place. */
   private dropOneBot(): boolean {
     const first = this.bots.keys().next();
     if (first.done) return false;
@@ -500,17 +439,12 @@ export class MatchNet {
     this.bots.clear();
   }
 
-  /** How many are still in it (battle royale). */
   aliveCount() {
     let n = 0;
     for (const r of this.roster.values()) if (!r.out) n++;
     return n;
   }
 
-  /**
-   * Damage owed for standing outside the zone, batched onto a tick so the hurt
-   * effects do not fire every frame. Returns 0 when safe.
-   */
   zoneTick(dt: number, pos: THREE.Vector3) {
     if (this.mode !== "br" || !this.inMatch || !this.zone.active) return 0;
     const outside = Math.hypot(pos.x - this.zone.cx, pos.z - this.zone.cz) > this.zone.r;
@@ -529,15 +463,12 @@ export class MatchNet {
       const row = this.roster.get(id);
       const ink = this.mode === "tdm" ? TEAM_INKS[(row?.team ?? 0) % TEAM_INKS.length] : FFA_INK;
       if (r.ink !== ink) {
-        // rebuild in the new colour
         r.dispose();
         const fresh = new RemotePlayer(this.hooks.scene, id, row?.name || r.name, row?.team ?? 0, ink);
         this.remotes.set(id, fresh);
       }
     }
   }
-
-  // ---- roster ----------------------------------------------------------
 
   private rosterRows(): RosterRow[] {
     return [...this.roster.values()].map((r) => ({ ...r }));
@@ -567,14 +498,12 @@ export class MatchNet {
     this.remotes.delete(id);
   }
 
-  /** Live list for the hitscan, refreshed each frame. */
   targets() {
     const out = [];
     for (const r of this.remotes.values()) if (this.canHurt(r.id)) out.push(r);
     return out;
   }
 
-  /** What everyone in the lobby has said, newest last, capped. */
   chat: ChatLine[] = [];
   private chatId = 0;
 
@@ -585,7 +514,6 @@ export class MatchNet {
     this.hooks.changed();
   }
 
-  /** Say something to the lobby, or just to your own side. */
   say(text: string, team = false) {
     const clean = text.trim().slice(0, 120);
     if (!clean || !this.net.active) return;
@@ -594,7 +522,6 @@ export class MatchNet {
     this.pushChat(me?.name ?? "you", clean, team, me?.team ?? 0);
   }
 
-  /** A kill also extends that player's run, which is what the MVP card shows. */
   private scoreKill(id: string | undefined) {
     const r = id ? this.roster.get(id) : undefined;
     if (!r) return;
@@ -620,13 +547,10 @@ export class MatchNet {
     return t;
   }
 
-  // ---- messages --------------------------------------------------------
-
   private wire() {
     const net = this.net;
 
     net.onPeerJoin = (id, meta) => {
-      // a person takes a bot's seat rather than growing the match
       if (this.bots.size) this.dropOneBot();
       const name = String((meta as { name?: string })?.name || "doodle").slice(0, 14);
       const team = this.mode === "tdm" ? this.smallestTeam() : 0;
@@ -634,7 +558,6 @@ export class MatchNet {
       this.addRemote(id, name, team);
       this.broadcastLobby();
       if (this.state === "playing") {
-        // late joiner: drop them straight in
         const pts = this.hooks.spawnPoints();
         net.sendTo(id, "start", {
           map: this.mapKey,
@@ -660,8 +583,6 @@ export class MatchNet {
       this.leave();
     };
 
-    // Only say something once it has happened enough times to mean it. A single
-    // bad window is a backlog from a tab that was in the background, not a cheat.
     net.onViolation = (pid, reason, repeated) => {
       if (!repeated) return;
       const nm = this.roster.get(pid)?.name ?? "someone";
@@ -714,19 +635,16 @@ export class MatchNet {
       this.beginMatch(d.spawns?.[net.id!] ?? 0, d.loot || []);
     });
 
-    // the host owns the zone; everyone else just draws where it says
     net.on<ZoneState>("zone", (d) => {
       if (net.isHost || !d) return;
       this.zone = { ...d };
     });
 
-    // a player snapshot, relayed to everyone
     net.on<Snapshot>("ps", (d, from) => {
       const r = this.remotes.get(from);
       if (r) r.push(d, performance.now() / 1000);
     });
 
-    // every bot in one message rather than one message each
     net.on<{ i: string; s: Snapshot }[]>("bots", (list) => {
       if (net.isHost || !Array.isArray(list)) return;
       const now = performance.now() / 1000;
@@ -737,23 +655,19 @@ export class MatchNet {
       if (!d || typeof d.text !== "string") return;
       const who = this.roster.get(from);
       if (!who) return;
-      // a team message is only for the people it was meant for
       if (d.team && this.mode === "tdm" && who.team !== this.myTeam) return;
       this.pushChat(who.name, d.text.slice(0, 120), !!d.team, who.team);
     });
 
-    // a client hit one of the host's bots
     net.on<{ bot: string; amount: number; by: string }>("botdmg", (d, from) => {
       if (!net.isHost || !d) return;
       this.damageBot(d.bot, Math.max(0, d.amount || 0), d.by || from);
     });
 
-    // someone got to a drop first
     net.on<{ id: number }>("taken", (d) => {
       if (d && typeof d.id === "number") this.hooks.removeDrop(d.id);
     });
 
-    // someone says they hit us; our client is the one that applies it
     net.on<{ amount: number; from: number[] | null; by: string; crit?: boolean }>("pdmg", (d, from) => {
       if (this.state !== "playing" || !this.hooks.localAlive()) return;
       const by = d.by || from;
@@ -772,10 +686,8 @@ export class MatchNet {
       gun?: string | null;
       drops?: [number, number];
     }>("pdead", (d, from) => {
-      // the host reports bot deaths on their behalf, so trust `who` when present
       const whoId = d.who || from;
       const victim = this.roster.get(whoId);
-      // everyone spawns the same drops from the same ids, so no round trip is needed
       if (d.at && d.drops) this.hooks.dropAt(d.at, d.gun ?? null, d.drops);
       this.scoreDeath(whoId);
       this.scoreKill(d.killer);
@@ -821,9 +733,7 @@ export class MatchNet {
   }
 
   lastHitBy: string | null = null;
-  /** where the shot that hurt you came from, for the kill cam */
   lastHitFrom: THREE.Vector3 | null = null;
-  /** set on death in a PvP match, cleared when you come back */
   killCam: { by: string; name: string; from: THREE.Vector3; at: THREE.Vector3; hp: number } | null = null;
 
   private smallestTeam() {
@@ -841,7 +751,6 @@ export class MatchNet {
   private checkWin() {
     if (!this.net.isHost || this.state !== "playing") return;
     if (this.mode === "br") {
-      // a lobby of one is a practice run, not a won match
       if (this.roster.size < 2) return;
       const standing = [...this.roster.values()].filter((r) => !r.out);
       if (standing.length <= 1) {
@@ -882,7 +791,6 @@ export class MatchNet {
     this.hooks.changed();
   }
 
-  /** Host only: throw everyone back to the lobby for another round. */
   backToLobby() {
     if (!this.net.isHost) return;
     this.state = "lobby";
@@ -902,13 +810,8 @@ export class MatchNet {
     else this.net.send("startreq");
   }
 
-  // ---- per-frame -------------------------------------------------------
-
-  /** Report a hit we landed on another player. */
-  /** `gun` is what the receiver checks the damage against; "execute" is a finisher. */
   reportHit(id: string, amount: number, fromPos: THREE.Vector3, crit: boolean, gun: WeaponKind | "execute" = "rifle") {
     if (!this.inMatch) return;
-    // bots live on the host, so their damage goes there rather than to a peer
     if (this.roster.get(id)?.bot) {
       if (this.net.isHost) this.damageBot(id, amount, this.net.id!);
       else this.net.send("botdmg", { bot: id, amount: Math.round(amount), by: this.net.id, gun });
@@ -923,14 +826,11 @@ export class MatchNet {
     });
   }
 
-  /** The local player died; tell everyone and start the respawn clock. */
-  /** Two ids from one random base, so both drops are unique across clients. */
   private dropIds(): [number, number] {
     const base = Math.floor(Math.random() * 1e9);
     return [base, base + 1];
   }
 
-  /** Someone walked over a drop; make it vanish for everyone else too. */
   reportPickup(id: number) {
     if (this.net.active) this.net.broadcast("taken", { id });
   }
@@ -943,7 +843,6 @@ export class MatchNet {
     const gun = this.hooks.localWeapon();
     const at: [number, number, number] = [+p.x.toFixed(1), +p.y.toFixed(1), +p.z.toFixed(1)];
     this.net.broadcast("pdead", { killer, at, gun, drops });
-    // drop our own kit locally as well; the message does not come back to us
     this.hooks.dropAt(at, gun, drops);
     this.scoreDeath(this.net.id!);
     this.scoreKill(killer ?? undefined);
@@ -952,8 +851,6 @@ export class MatchNet {
       this.sendScores();
       this.checkWin();
     }
-    // Frame whoever did it. The shot origin is where the camera goes, and the
-    // body is what it looks at; a remote we still track gives their live health.
     if (killer) {
       const shooter = this.remotes.get(killer);
       this.killCam = {
@@ -968,7 +865,6 @@ export class MatchNet {
     this.lastHitBy = null;
     this.lastHitFrom = null;
     this.deadT = 0;
-    // battle royale has no second chances
     const byName = k?.name;
     if (this.mode === "br") {
       const me = this.roster.get(this.net.id!);
@@ -998,7 +894,6 @@ export class MatchNet {
 
     if (this.state !== "playing") return;
 
-    // the host drives the zone and tells everyone else where it is
     if (this.mode === "br" && this.zone.active && this.net.isHost) {
       const z = this.zone;
       z.wait -= dt;
@@ -1016,7 +911,6 @@ export class MatchNet {
       }
     }
 
-    // respawn the local player after a beat, as far from everyone else as we can
     if (this.pendingRespawn) {
       this.deadT += dt;
       if (this.deadT >= RESPAWN_DELAY) {
@@ -1027,7 +921,6 @@ export class MatchNet {
       }
     }
 
-    // the host runs the bots every frame, but only ships them at snapshot rate
     if (this.net.isHost && this.bots.size) {
       this.candidateCache = this.botCandidates();
       this.aggro.clear();
@@ -1049,7 +942,6 @@ export class MatchNet {
         for (const [id, b] of this.bots) {
           const s = encodeLocal(b, b.firing);
           batch.push({ i: id, s });
-          // the host draws its own bots through the same interpolation path
           this.remotes.get(id)?.push(s, now);
         }
         this.net.send("bots", batch);

@@ -1,7 +1,3 @@
-// Scorestreaks: rewards for a run of kills without dying. Damage routes back
-// through the caller, so PvE enemies and PvP players take it down the same path
-// the guns already use.
-
 import * as THREE from "three";
 import { World } from "./physics";
 import { INK, makeInkMaterial } from "./renderer";
@@ -12,9 +8,7 @@ export type StreakKind = "uav" | "drone" | "missile" | "swarm";
 export interface StreakDef {
   kind: StreakKind;
   name: string;
-  /** kills in a row needed to earn it */
   cost: number;
-  /** seconds it stays out; 0 means it resolves immediately */
   duration: number;
   blurb: string;
 }
@@ -28,7 +22,6 @@ export const STREAKS: Record<StreakKind, StreakDef> = {
 
 export const STREAK_ORDER: StreakKind[] = ["uav", "drone", "missile", "swarm"];
 
-/** Anything a streak can shoot at. The caller decides what counts as hostile. */
 export interface StreakTarget {
   pos: THREE.Vector3;
   center: THREE.Vector3;
@@ -39,17 +32,13 @@ export interface StreakTarget {
 export interface StreakHooks {
   scene: THREE.Scene;
   world: World;
-  /** everything the local player is allowed to hurt, rebuilt per frame */
   hostiles: () => StreakTarget[];
-  /** where the player is right now */
   eye: () => THREE.Vector3;
   pos: () => THREE.Vector3;
   yaw: () => number;
-  /** area damage, routed through the existing explosion path */
   boom: (at: THREE.Vector3, radius: number, dmg: number) => void;
   tracer: (from: THREE.Vector3, to: THREE.Vector3) => void;
   announce: (main: string, sub?: string) => void;
-  /** look input this frame, for steering the missile */
   look: () => { x: number; y: number };
 }
 
@@ -73,9 +62,7 @@ interface SwarmUnit {
 export class Streaks {
   hooks: StreakHooks;
 
-  /** kills since the last death */
   streak = 0;
-  /** earned but not yet used */
   ready = new Set<StreakKind>();
 
   uavT = 0;
@@ -96,7 +83,6 @@ export class Streaks {
     this.hooks = hooks;
   }
 
-  /** True while the predator is in the air and owns the camera. */
   get piloting() {
     return !!this.missile;
   }
@@ -104,15 +90,15 @@ export class Streaks {
     return this.uavT > 0;
   }
 
-  /** Where the camera should be while piloting, or null to leave it alone. */
+  private _view = { pos: new THREE.Vector3(), look: new THREE.Vector3() };
   cameraView(): { pos: THREE.Vector3; look: THREE.Vector3 } | null {
     if (!this.missile) return null;
-    const back = this.missilePos.clone().addScaledVector(this.missileDir, -3.2);
+    const back = this._view.pos.copy(this.missilePos).addScaledVector(this.missileDir, -3.2);
     back.y += 1.1;
-    return { pos: back, look: this.missilePos.clone().addScaledVector(this.missileDir, 6) };
+    this._view.look.copy(this.missilePos).addScaledVector(this.missileDir, 6);
+    return this._view;
   }
 
-  /** A kill happened; hand out anything newly earned. */
   addKill() {
     this.streak += 1;
     for (const k of STREAK_ORDER) {
@@ -124,7 +110,6 @@ export class Streaks {
     }
   }
 
-  /** Dying loses the run but keeps what you already earned, as CoD does. */
   onDeath() {
     this.streak = 0;
   }
@@ -153,8 +138,6 @@ export class Streaks {
     this.ready.delete(kind);
     return true;
   }
-
-  // ---- drone -------------------------------------------------------------
 
   private spawnDrone() {
     this.clearDrone();
@@ -201,8 +184,7 @@ export class Streaks {
       this.clearDrone();
       return;
     }
-    // trail the player's shoulder
-    const want = this.hooks.eye().clone();
+    const want = _want.copy(this.hooks.eye());
     const yaw = this.hooks.yaw();
     want.x += Math.sin(yaw) * 1.6 + 1.1;
     want.z += Math.cos(yaw) * 1.6;
@@ -231,8 +213,6 @@ export class Streaks {
     best.hit(DRONE_DAMAGE, false);
   }
 
-  // ---- predator missile ---------------------------------------------------
-
   private launchMissile() {
     this.clearMissile();
     const g = new THREE.Group();
@@ -249,7 +229,6 @@ export class Streaks {
       fin.rotation.z = a;
       g.add(fin);
     }
-    // start high above and behind, nose down, the way a called-in strike arrives
     const from = this.hooks.pos().clone();
     this.missilePos.set(from.x, from.y + 46, from.z);
     this.missileDir.set(0, -1, 0).normalize();
@@ -274,10 +253,9 @@ export class Streaks {
     if (!this.missile) return;
     this.missileT -= dt;
 
-    // steer with look input, clamped so it stays flyable
     const look = this.hooks.look();
-    const right = new THREE.Vector3(-this.missileDir.z, 0, this.missileDir.x).normalize();
-    const up = new THREE.Vector3().crossVectors(right, this.missileDir).normalize();
+    const right = _right.set(-this.missileDir.z, 0, this.missileDir.x).normalize();
+    const up = _up.crossVectors(right, this.missileDir).normalize();
     this.missileDir.addScaledVector(right, clamp(look.x, -0.06, 0.06) * 2.4);
     this.missileDir.addScaledVector(up, clamp(-look.y, -0.06, 0.06) * 2.4);
     this.missileDir.normalize();
@@ -286,9 +264,8 @@ export class Streaks {
     const hit = this.hooks.world.raycast(this.missilePos, this.missileDir, step + 0.6);
     this.missilePos.addScaledVector(this.missileDir, step);
     this.missile.position.copy(this.missilePos);
-    this.missile.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), this.missileDir);
+    this.missile.quaternion.setFromUnitVectors(NOSE, this.missileDir);
 
-    // a near miss on a body still counts
     let touched = !!hit;
     if (!touched) {
       for (const t of this.hooks.hostiles()) {
@@ -304,8 +281,6 @@ export class Streaks {
       this.hooks.boom(at, 11, 190);
     }
   }
-
-  // ---- swarm --------------------------------------------------------------
 
   private spawnSwarm() {
     this.clearSwarm();
@@ -330,7 +305,6 @@ export class Streaks {
 
   private clearSwarm() {
     for (const s of this.swarm) this.hooks.scene.remove(s.mesh);
-    // one shared geometry across the flight, disposed once
     if (this.swarm.length) this.swarm[0].mesh.geometry.dispose();
     this.swarm.length = 0;
   }
@@ -360,7 +334,7 @@ export class Streaks {
       }
 
       if (s.target) {
-        const to = new THREE.Vector3().subVectors(s.target.center, s.mesh.position);
+        const to = _to.subVectors(s.target.center, s.mesh.position);
         const dist = to.length();
         if (dist < 0.9) {
           s.alive = false;
@@ -371,8 +345,7 @@ export class Streaks {
         to.divideScalar(dist || 1);
         s.vel.lerp(to.multiplyScalar(SWARM_SPEED), 1 - Math.exp(-dt * 4));
       } else {
-        // nothing to chase: mill about above the owner
-        const want = this.hooks.eye().clone();
+        const want = _want.copy(this.hooks.eye());
         want.y += 3;
         s.vel.lerp(want.sub(s.mesh.position).multiplyScalar(0.8), 1 - Math.exp(-dt * 2));
       }
@@ -397,3 +370,9 @@ export class Streaks {
     this.clearSwarm();
   }
 }
+
+const NOSE = new THREE.Vector3(0, 0, -1);
+const _to = new THREE.Vector3();
+const _want = new THREE.Vector3();
+const _right = new THREE.Vector3();
+const _up = new THREE.Vector3();

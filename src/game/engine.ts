@@ -8,22 +8,18 @@ import { ZoneView } from "./zone";
 import { Streaks, type StreakKind, type StreakTarget } from "./streaks";
 import { Skills, sanitizeSkill } from "./skills";
 
-/** how long a fallen player's kit stays on the ground */
 const DROP_LIFE = 18;
 
 export type AimAssist = "off" | "assist" | "auto";
 export const isAimAssist = (v: unknown): v is AimAssist => v === "off" || v === "assist" || v === "auto";
-/** How far off the crosshair a target can be and still be picked up, in radians. */
 const ASSIST_CONE = 0.2;
 const ASSIST_CONE_ADS = 0.12;
 const ASSIST_RANGE = 70;
-/** Turn rates, radians per second: a nudge, and a closing snap. */
 const ASSIST_PULL = 1.3;
 const ASSIST_SNAP = 9;
-/** `assist` stops helping this close in, so the last degree is still yours. */
 const ASSIST_DEADZONE = 0.03;
-/** seconds after respawning during which the loadout can still be changed */
 const RESPAWN_SWAP = 5;
+const _to = new THREE.Vector3();
 import { Player, WEAPONS, type Weapon, type WeaponKind } from "./player";
 import type { Gunsmith } from "./attachments";
 import type { Wardrobe } from "./cosmetics";
@@ -79,30 +75,22 @@ export interface HudSnap {
   modifier: string;
   focusFrac: number;
   focusReady: boolean;
-  /** the brief post-respawn window where the kit can still be swapped */
   canSwap: boolean;
-  /** scorestreaks earned and waiting to be called in */
   streakReady: string[];
   streak: number;
   uav: boolean;
   piloting: boolean;
-  /** grapple: breath left, whether you are hanging, and whether it has a bite */
   grappleStam: number;
   grappleOn: boolean;
   grappleAim: boolean;
-  /** operator skill: which one, how charged, and how long it has left */
   skill: string;
   skillCharge: number;
   skillActive: number;
   skillReady: boolean;
-  /** night map, and whether the goggles are down */
   night: boolean;
   goggles: boolean;
-  /** who put you down, while the kill cam is framing them */
   killCam: { name: string; hp: number; dist: number } | null;
-  /** minimap blips in world space; the UI rotates them into the player's frame */
   radar: { x: number; z: number; hostile: boolean }[];
-  /** the map's footprint in world units, built once when the level loads */
   radarWalls: { x: number; z: number; w: number; d: number; tall: boolean }[];
   radarSelf: { x: number; z: number; yaw: number };
   radarHalf: number;
@@ -194,30 +182,19 @@ export class Game {
   hud: HudSnap = defaultHud();
   onHud: ((h: HudSnap) => void) | null = null;
   onState: ((s: GameState) => void) | null = null;
-  /** fired per kill with the weapon that got it, so camos can progress */
   onWeaponKill: (k: WeaponKind) => void = () => {};
-  /** fires when the lobby roster, scores or match state change */
   onNet: (() => void) | null = null;
   match!: MatchNet;
   zoneView!: ZoneView;
   streaks!: Streaks;
   skills!: Skills;
 
-  /**
-   * Swap kit during the post-respawn window. Guarded here rather than in the UI
-   * so holding the menu open past the window does not become a free re-arm.
-   */
   applyLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith, wardrobe?: Wardrobe): boolean {
     if (this.swapWindow <= 0 || this.player.spentResource || !this.player.alive) return false;
     this.player.setLoadout(kinds, gunsmith, wardrobe);
     return true;
   }
 
-  /**
-   * The map as seen from above, for the minimap. Small props are left out — at
-   * minimap scale they are noise, and what you actually navigate by is the
-   * buildings and the cover you can hide behind.
-   */
   private mapFootprint() {
     const half = getMap(this.mapKey).half;
     const out: HudSnap["radarWalls"] = [];
@@ -225,17 +202,12 @@ export class Game {
       const w = b.maxx - b.minx;
       const d = b.maxz - b.minz;
       if (b.maxy < 0.7 || w < 1.2 || d < 1.2) continue;
-      // the arena's own boundary walls sit outside what the minimap shows
       if (b.minx > half || b.maxx < -half || b.minz > half || b.maxz < -half) continue;
       out.push({ x: b.minx, z: b.minz, w, d, tall: b.maxy > 4 });
     }
     return out;
   }
 
-  /**
-   * What the grapple may hook. Anything you could shoot is fair game — hooking
-   * a body yanks it to you instead of pulling you to it.
-   */
   private grappleTargets(): GrappleTarget[] {
     const out: GrappleTarget[] = [];
     for (const e of this.combat.enemies) {
@@ -260,7 +232,6 @@ export class Game {
     return out;
   }
 
-  /** Everything the local player may hurt, for streaks to pick from. */
   private streakTargets(): StreakTarget[] {
     const out: StreakTarget[] = [];
     for (const e of this.combat.enemies) {
@@ -289,11 +260,6 @@ export class Game {
     return out;
   }
 
-  /**
-   * The kill cam. Not a replay — there is no recording — but the shot's own
-   * origin looking back at your body, which is the part you actually want:
-   * where they were standing and what they could see.
-   */
   private killCamView(dt: number) {
     const cam = this.match.killCam;
     if (!cam || this.player.alive) {
@@ -302,7 +268,6 @@ export class Game {
       return;
     }
     this.killCamT += dt;
-    // pull back a little from the muzzle and drift in, so it reads as a shot
     const back = new THREE.Vector3().subVectors(cam.from, cam.at);
     const dist = back.length() || 1;
     back.divideScalar(dist);
@@ -314,11 +279,6 @@ export class Game {
     this.hud.killCam = { name: cam.name, hp: cam.hp, dist: Math.round(dist) };
   }
 
-  /**
-   * Pay out a ranked match once, when it ends. It reads the final board rather
-   * than tallying as it goes, so a late disconnect cannot bank a better place
-   * than the one you actually finished in.
-   */
   private settleRank() {
     if (!this.ranked || this.rankedDone) return;
     if (this.match.state !== "over") return;
@@ -337,31 +297,24 @@ export class Game {
     this.onRanked?.(delta, place, board.length);
   }
 
-  /** Call in the operator skill, if it is charged. */
   useSkill() {
     return this.skills.use();
   }
 
-  /** Swap the operator skill, e.g. during the post-respawn window. */
   setSkill(k: string) {
     this.skills.setKind(sanitizeSkill(k));
     this.player.grappleEnabled = this.skills.kind === "grappler";
   }
 
-  /** Call in an earned streak. */
   useStreak(kind: StreakKind) {
     return this.streaks.use(kind);
   }
 
-  /** 0 means uncapped; otherwise the shortest gap between frames, in ms. */
   private frameMin = 0;
-  /** the map is dark, so the goggles are worth carrying */
   night = false;
   ranked = false;
-  /** fires once when a ranked match ends, with what it was worth */
   onRanked: ((delta: number, place: number, players: number) => void) | null = null;
   private gogglesOn = false;
-  /** how much help the crosshair gets while the trigger is down */
   assist: AimAssist = "off";
   private killCamT = 0;
   private rankedDone = false;
@@ -371,7 +324,6 @@ export class Game {
     this.R.setBudget(fps);
   }
 
-  /** Live, so the sliders can be dragged with the match paused behind them. */
   applySensitivity(s: Sens) {
     const i = this.input;
     i.mouseSens = BASE.mouse * (s.look / 100);
@@ -385,7 +337,6 @@ export class Game {
     this.input.invertY = v;
   }
 
-  /** Apply a graphics preset to a running game. */
   setQuality(q: Quality) {
     this.R.setQuality(q);
     this.combat.fx = QUALITY[q].fx;
@@ -425,7 +376,6 @@ export class Game {
     this.input = new Input(canvas);
     this.best = Number(localStorage.getItem(mode === "zombies" ? "doodle_zbest" : "doodle_best") || 0);
     this.level = buildLevel(this.R.scene, this.world, mode, mapKey, this.night);
-    // a map can bring its own paper and pens; night overrides both anyway
     this.R.setStyle(getMap(mapKey).style ?? null);
     this.combat = new Combat(this.world, this.R.scene, this.audio);
     const readInk = (key: string, fallback: number) => {
@@ -501,7 +451,6 @@ export class Game {
       dropAt: (p, weapon, ids) => {
         const at = new THREE.Vector3(p[0], p[1], p[2]);
         this.combat.spawnPickup("ammo", at, { id: ids[0], life: DROP_LIFE });
-        // only drop a gun we actually know about
         const kind = WEAPONS.find((w) => w.kind === weapon && w.isGun)?.kind;
         if (kind) {
           this.combat.spawnPickup("gun", at.clone().add(new THREE.Vector3(1.0, 0, 0.4)), {
@@ -524,20 +473,13 @@ export class Game {
       localKill: () => this.streaks.addKill(),
     });
     this.ranked = ranked;
-    // a ranked lobby fills with bots picked for your tier, not the house default
     if (ranked) this.match.botSkill = tierOf(sr).bots;
-    // a hit on another player is reported to them; their client applies it
-    // the weapon rides along so the receiving end can tell an honest sniper
-    // round from a rifle claiming to do 200
     this.combat.onRemoteHit = (t, dmg, crit) =>
       this.match.reportHit(t.id, dmg, this.player.eye, crit, this.player.weapon.def.kind);
-    // a finisher: no health bar survives it, and it reads as its own event
     this.combat.onRemoteExecute = (t) => {
       this.match.reportHit(t.id, 500, this.player.eye, true, "execute");
       const name = this.match.roster.get(t.id)?.name ?? "them";
       this.addScore(150, `EXECUTED ${name}`);
-      // the body plays it out where you are standing; the hitstop is long enough
-      // that you actually watch the neck go
       t.execute?.();
       this.hitstopT = Math.max(this.hitstopT, 0.3);
       this.player.shake += 0.5;
@@ -581,9 +523,6 @@ export class Game {
       const r = canvas.parentElement?.getBoundingClientRect() || canvas.getBoundingClientRect();
       const w = Math.max(1, r.width || window.innerWidth);
       const h = Math.max(1, r.height || window.innerHeight);
-      // A phone fires resize every time the URL bar slides, and each one blanks
-      // the canvas to the paper page behind it — which is the white flash. Only
-      // act on a size that actually moved.
       if (Math.abs(w - this.lastCssW) < 1 && Math.abs(h - this.lastCssH) < 1) return;
       this.lastCssW = w;
       this.lastCssH = h;
@@ -601,7 +540,6 @@ export class Game {
     this.audio.startMusic();
     this.last = performance.now();
     if (this.mode === "arena") {
-      // no waves in PvP; the lobby decides when the match begins
       this.state = "playing";
       this.announce("THE ARENA", "waiting for the lobby");
     } else {
@@ -652,14 +590,6 @@ export class Game {
     this.combat.spawn(kind, p);
   }
 
-  /**
-   * Aim assist. `assist` turns you toward whatever is already near the crosshair
-   * while the trigger is down — a hand on the wrist, not a lock. `auto` closes
-   * the gap outright, which is the only way a thumb keeps up with a strafing
-   * bot. Both need a clear line, so it never drags you onto someone through a
-   * wall, and neither touches the shot itself: spread, falloff and penetration
-   * all still apply to where the barrel ends up pointing.
-   */
   private aimAssist(dt: number) {
     if (this.assist === "off" || !this.player.alive || this.player.weaponHidden) return;
     if (!this.input.down("fire") || !this.player.weapon.def.isGun) return;
@@ -669,7 +599,7 @@ export class Game {
     let best: THREE.Vector3 | null = null;
     let bestDot = Math.cos(cone);
     const consider = (c: THREE.Vector3) => {
-      const to = new THREE.Vector3().subVectors(c, eye);
+      const to = _to.subVectors(c, eye);
       const dist = to.length();
       if (dist < 0.5 || dist > ASSIST_RANGE) return;
       to.divideScalar(dist);
@@ -683,7 +613,7 @@ export class Game {
     for (const r of this.combat.remotes) if (r.alive) consider(r.center);
     if (!best) return;
 
-    const to = new THREE.Vector3().subVectors(best, eye).normalize();
+    const to = _to.subVectors(best, eye).normalize();
     const wantYaw = Math.atan2(-to.x, -to.z);
     const wantPitch = Math.asin(clamp(to.y, -1, 1));
     const auto = this.assist === "auto";
@@ -724,17 +654,11 @@ export class Game {
       this.player.weapon.bloody(r.kill ? 0.34 : 0.12);
     }
     if (r.kill) {
-      // a slash can take several at once, so it scores as one swing rather than
-      // going through onKill per body
       this.addScore(heavy ? 200 : 120, heavy ? "FOCUS SLASH" : "SLASH");
       this.kills += 1;
     }
   }
 
-  /**
-   * A shot the katana turned away. It goes back down its own path as a real
-   * hitscan, so whoever fired it takes it — and the blade wears the result.
-   */
   private handleDeflect(origin: THREE.Vector3, dir: THREE.Vector3, dmg: number) {
     this.combat.tracer(origin, origin.clone().addScaledVector(dir, 40));
     this.audio.parry();
@@ -754,7 +678,6 @@ export class Game {
 
   private onKill(name: string, pts: number, crit: boolean) {
     this.kills += 1;
-    // the gun in hand earns its own progression, which is what unlocks camos
     this.onWeaponKill(this.player.weapon.def.kind);
     this.streaks.addKill();
     this.combo = Math.min(12, this.combo + 1);
@@ -768,9 +691,10 @@ export class Game {
     const p = Math.round(pts * mult);
     this.score += p;
     this.feedId += 1;
-    this.hud.killFeed = [{ id: this.feedId, text: label, pts: p }, ...this.hud.killFeed].slice(0, 5);
+    const id = this.feedId;
+    this.hud.killFeed = [{ id, text: label, pts: p }, ...this.hud.killFeed].slice(0, 5);
     setTimeout(() => {
-      this.hud.killFeed = this.hud.killFeed.filter((k) => k.id !== this.feedId);
+      this.hud.killFeed = this.hud.killFeed.filter((k) => k.id !== id);
     }, 1700);
   }
 
@@ -796,8 +720,6 @@ export class Game {
   }
 
   private handleDeath() {
-    // online you come back; the match, not the run, is what ends.
-    // reportDeath does the announcing, because it knows who killed you.
     this.streaks.onDeath();
     this.skills.onDeath();
     if (this.match.inMatch) {
@@ -828,8 +750,6 @@ export class Game {
   private loop = (now: number) => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.loop);
-    // A cap saves battery on a phone that would otherwise render 120 frames it
-    // cannot sustain. The slack keeps a 60Hz display from dropping to 30.
     if (this.frameMin > 0 && now - this.last < this.frameMin - 1) return;
     const raw = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
@@ -837,7 +757,9 @@ export class Game {
 
     if (this.input.pressed("pause")) {
       if (this.state === "playing" || this.state === "intermission") this.pause();
-      else if (this.state === "paused") this.resume();
+      else if (this.state === "paused" && !(this.input.lastCode === "Escape" && performance.now() - this.input.lockLostAt < 400)) {
+        this.resume();
+      }
     }
     if (this.input.pressed("music")) this.audio.setMusic(!this.audio.musicWanted);
 
@@ -849,7 +771,6 @@ export class Game {
 
     if (this.state === "playing" || this.state === "intermission") {
       this.time += dt;
-      // before the player reads its own yaw, so the shot goes where the assist put it
       this.aimAssist(dt);
       this.player.update(dt);
       if (this.match.online) {
@@ -868,7 +789,6 @@ export class Game {
       this.skills.update(dt, this.input.down("fire"));
       this.player.weaponHidden = this.skills.overridesWeapon;
       this.player.setSkillModel(this.skills.overridesWeapon ? this.skills.kind : "");
-      // the skill key doubles as the grapple key: whichever this loadout runs
       if (!this.player.grappleEnabled && this.input.pressed("grapple")) this.skills.use();
       if (this.night && this.input.pressed("goggles")) {
         this.gogglesOn = !this.gogglesOn;
@@ -929,11 +849,9 @@ export class Game {
     const moving = this.player.onGround && Math.hypot(this.player.vel.x, this.player.vel.z) > 1.2;
     this.audio.update(raw, moving && this.state === "playing", this.player.sprinting);
 
-    // the radar only needs a dozen refreshes a second, not one per frame
     if (this.time - this.radarAt > 0.08) {
       this.radarAt = this.time;
       const blips: HudSnap["radar"] = [];
-      // a UAV is what turns the minimap from "nearby" into "everyone"
       const reach = this.streaks.uavActive ? Infinity : 26;
       const near = (x: number, z: number) => Math.hypot(x - this.player.pos.x, z - this.player.pos.z) <= reach;
       for (const e of this.combat.enemies) {
@@ -941,7 +859,6 @@ export class Game {
       }
       for (const r of this.match.remotes.values()) {
         const friendly = !this.match.canHurt(r.id);
-        // teammates always show; enemies need proximity or a UAV
         if (r.alive && (friendly || near(r.pos.x, r.pos.z))) {
           blips.push({ x: r.pos.x, z: r.pos.z, hostile: !friendly });
         }
@@ -986,7 +903,6 @@ export class Game {
     this.hud.skillCharge = this.skills.charge;
     this.hud.skillActive = this.skills.activeT;
     this.hud.skillReady = this.skills.ready;
-    // spending anything — a bullet, a grenade, a swing — closes the window
     this.hud.canSwap =
       this.match.inMatch && this.player.alive && this.swapWindow > 0 && !this.player.spentResource;
     this.hud.boss = boss ? { name: boss.def.name, frac: clamp(boss.hp / boss.maxHp, 0, 1) } : null;
@@ -1004,7 +920,6 @@ export class Game {
     this.R.setFlash(this.player.flashFx);
     this.R.setLowHp(this.hud.low ? 1 : 0);
     this.R.render(this.time);
-    // a paused frame is cheap and would talk the scaler back up for nothing
     if (this.state === "playing") this.R.pace(raw);
     this.onHud?.(this.hud);
   };

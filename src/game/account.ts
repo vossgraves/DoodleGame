@@ -1,10 +1,3 @@
-// Client for the accounts API.
-//
-// The game must keep working with no backend at all — it is a static build with
-// peer-to-peer play, and the API is an optional extra. Every call here fails
-// soft: if there is no /api, you stay signed out and localStorage carries your
-// loadout and best scores exactly as before.
-
 export interface Account {
   id: string;
   username: string;
@@ -28,12 +21,6 @@ const TOKEN_KEY = "doodle_token";
 const UID_KEY = "doodle_uid";
 const API = "/api";
 
-/**
- * A stable id for this player, minted on first run. Signing in adopts the
- * account's id so the same person is the same id on every device; signing out
- * keeps it, because the id is who you are in a lobby, not who you are to the
- * database. It is also the fallback identity when there is no backend at all.
- */
 export function uid(): string {
   try {
     const seen = localStorage.getItem(UID_KEY);
@@ -48,7 +35,6 @@ export function uid(): string {
   try {
     localStorage.setItem(UID_KEY, fresh);
   } catch {
-    // private mode: the id lasts the session, which is still better than none
   }
   return fresh;
 }
@@ -57,7 +43,6 @@ export function adoptUid(id: string) {
   try {
     localStorage.setItem(UID_KEY, id);
   } catch {
-    // nothing to do; uid() will mint a fresh one next time
   }
 }
 
@@ -74,7 +59,6 @@ function setToken(token: string | null) {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
   } catch {
-    /* private mode; the session just will not survive a reload */
   }
 }
 
@@ -95,7 +79,6 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   } catch {
     throw new ApiError("cannot reach the server");
   }
-  // a static deploy with no functions answers HTML, not JSON
   const text = await res.text();
   let body: unknown = null;
   try {
@@ -138,7 +121,6 @@ export async function logout(): Promise<void> {
   try {
     await call("/auth/logout", { method: "POST" });
   } catch {
-    /* dropping the local token is what actually signs you out here */
   }
   setToken(null);
 }
@@ -148,7 +130,6 @@ export async function me(): Promise<{ user: Account; profile: Profile; stats: St
   try {
     return await call<{ user: Account; profile: Profile; stats: Stats }>("/me");
   } catch (e) {
-    // an expired or rejected session should not leave a dead token behind
     if (e instanceof ApiError && /session/i.test(e.message)) setToken(null);
     return null;
   }
@@ -167,13 +148,6 @@ export async function saveProfile(loadout: string[], settings: Record<string, un
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let pending: { loadout: string[]; settings: Record<string, unknown> } | null = null;
 
-/**
- * Coalesce profile writes.
- *
- * Tapping through the loadout fires a change per chip; without this that is one
- * serverless invocation and one database round trip each, which is a silly way
- * to spend a free tier. Only the last state in a 1.2s window is ever sent.
- */
 export function saveProfileSoon(loadout: string[], settings: Record<string, unknown> = {}) {
   if (!savedToken()) return;
   pending = { loadout, settings };
@@ -186,7 +160,6 @@ export function saveProfileSoon(loadout: string[], settings: Record<string, unkn
   }, 1200);
 }
 
-/** Flush any queued write immediately, e.g. when leaving the loadout screen. */
 export function flushProfile() {
   if (!saveTimer || !pending) return;
   clearTimeout(saveTimer);

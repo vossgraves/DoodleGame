@@ -1,6 +1,5 @@
 import { clamp } from "./math";
 
-/** The default keys, and the order the settings screen lists them in. */
 export const DEFAULT_KEYS: Record<string, string[]> = {
   forward: ["KeyW", "ArrowUp"],
   back: ["KeyS", "ArrowDown"],
@@ -27,7 +26,6 @@ export const DEFAULT_KEYS: Record<string, string[]> = {
   music: ["KeyM"],
 };
 
-/** Only these are worth offering to rebind; the rest are fixed or aliases. */
 export const BINDABLE: { id: string; name: string }[] = [
   { id: "forward", name: "forward" },
   { id: "back", name: "back" },
@@ -65,12 +63,10 @@ function loadBindings(): Record<string, string[]> {
       }
     }
   } catch {
-    // a corrupt binding file should cost you the customisation, not the game
   }
   return out;
 }
 
-/** action per key code, rebuilt whenever a binding changes */
 let KEYMAP: Record<string, string> = {};
 
 function rebuild(bindings: Record<string, string[]>) {
@@ -87,7 +83,6 @@ export function currentBindings() {
   return bindings;
 }
 
-/** Bind one action to one key, dropping that key from wherever it was. */
 export function setBinding(action: string, code: string) {
   if (!(action in DEFAULT_KEYS)) return;
   for (const a of Object.keys(bindings)) {
@@ -95,9 +90,6 @@ export function setBinding(action: string, code: string) {
   }
   bindings[action] = [code];
   rebuild(bindings);
-  // Save only what actually differs. Writing every action would freeze the
-  // aliases as they are today and quietly drop the arrow keys from the actions
-  // the player never touched.
   const diff: Record<string, string> = {};
   for (const [a, keys] of Object.entries(bindings)) {
     const def = DEFAULT_KEYS[a] ?? [];
@@ -113,7 +105,6 @@ export function resetBindings() {
   rebuild(bindings);
 }
 
-/** "KeyW" reads badly on a settings row; "W" does not. */
 export function keyLabel(code: string) {
   if (!code) return "—";
   if (code.startsWith("Key")) return code.slice(3);
@@ -155,11 +146,6 @@ export class Input {
   canvas: HTMLCanvasElement;
   state: Record<string, boolean> = {};
   prev: Record<string, boolean> = {};
-  /**
-   * Actions that went down since the last frame. A tap shorter than one frame
-   * would otherwise land and lift between two samples and be lost entirely —
-   * which is exactly what happens to a quick jump on a struggling phone.
-   */
   private tapped: Record<string, boolean> = {};
   keys: Record<string, boolean> = {};
   mouseBtns: Record<string, boolean> = {};
@@ -169,34 +155,20 @@ export class Input {
   my = 0;
   wheel = 0;
   mouseSens = 0.0022;
-  /**
-   * A finger drag covers far more screen than a mouse covers mousepad, so touch
-   * gets its own base rather than a fudge factor on the mouse one. At this value
-   * a drag across half the screen is about a quarter turn.
-   */
   touchSens = 0.0045;
   padSensX = 3.4;
   padSensY = 2.6;
-  /**
-   * Aim sensitivity, as multipliers on the hipfire number. Splitting them by
-   * magnification is the point: what feels right down an iron sight is unusable
-   * through a sniper scope, because the same wrist flick covers eight times the
-   * arc on screen.
-   */
   adsSens = { hip: 1, ads: 0.8, scope: 0.6, sniper: 0.42 };
-  /** how much the current sight magnifies, set by the player each frame */
   aimZoom = 1;
   invertY = false;
   usingGamepad = false;
   gamepadIndex = -1;
   pointerLocked = false;
+  lockLostAt = 0;
   wantLock = false;
   isTouch = false;
-  /**
-   * True while the player is typing. Without it, saying "sniper" in chat makes
-   * you crouch, sprint and reload halfway through the word.
-   */
   textMode = false;
+  lastCode = "";
   touchMove = { x: 0, y: 0 };
   touchLookAcc = { x: 0, y: 0 };
   touchButtons: Record<string, boolean> = {};
@@ -213,12 +185,16 @@ export class Input {
 
     window.addEventListener("keydown", (e) => {
       if (e.repeat || this.textMode) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.isContentEditable)) return;
+      this.lastCode = e.code;
       const a = KEYMAP[e.code];
       if (a) {
         this.keys[a] = true;
         this.tapped[a] = true;
+        e.preventDefault();
       }
-      if (["Space", "Tab", "ArrowUp", "ArrowDown"].includes(e.code)) e.preventDefault();
+      if (["Space", "Tab", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "F5"].includes(e.code)) e.preventDefault();
     });
     window.addEventListener("keyup", (e) => {
       const a = KEYMAP[e.code];
@@ -245,7 +221,7 @@ export class Input {
     });
     document.addEventListener("mousedown", (e) => {
       const a = MOUSEMAP[e.button];
-      if (a) {
+      if (a && this.pointerLocked) {
         this.mouseBtns[a] = true;
         this.tapped[a] = true;
       }
@@ -265,6 +241,7 @@ export class Input {
     );
     document.addEventListener("pointerlockchange", () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
+      if (!this.pointerLocked) this.lockLostAt = performance.now();
       this.onLockChange?.(this.pointerLocked);
     });
     window.addEventListener("gamepadconnected", (e) => {
@@ -318,11 +295,6 @@ export class Input {
     this.touchButtons = {};
   }
 
-  /**
-   * Which aim multiplier applies right now. The bands follow how the sight
-   * actually behaves rather than what it is called, so a 4x on a rifle and a 4x
-   * on a sniper feel the same.
-   */
   private aimMul() {
     const z = this.aimZoom;
     if (z < 1.15) return this.adsSens.hip;
@@ -443,7 +415,6 @@ export class Input {
         weakMagnitude: clamp(weak, 0, 1),
       });
     } catch {
-      /* ignore */
     }
   }
 }

@@ -8,21 +8,29 @@ export interface Collider {
   maxy: number;
   maxz: number;
   noShoot?: boolean;
+  q?: number;
 }
 
 const EPS = 0.002;
+const CELL = 6;
 
-/** Cover thicker than this stops a bullet outright. */
 export const PEN_MAX_THICK = 0.9;
-/** What is left of a bullet after it comes out the far side. */
 export const PEN_DAMAGE = 0.45;
 
 export class World {
   boxes: Collider[] = [];
   bounds = { minX: -42, maxX: 42, minZ: -42, maxZ: 42 };
 
+  private grid = new Map<number, Collider[]>();
+  private gridDirty = true;
+  private stamp = 0;
+  private _los = new THREE.Vector3();
+  private _cands: Collider[] = [];
+  private _hitBox: Collider | null = null;
+
   clear() {
     this.boxes.length = 0;
+    this.gridDirty = true;
   }
 
   addBox(cx: number, y: number, cz: number, w: number, h: number, d: number, flags: { noShoot?: boolean } = {}) {
@@ -35,6 +43,43 @@ export class World {
       maxz: cz + d / 2,
       noShoot: flags.noShoot,
     });
+    this.gridDirty = true;
+  }
+
+  private ensureGrid() {
+    if (!this.gridDirty) return;
+    this.grid.clear();
+    for (const b of this.boxes) {
+      const x0 = Math.floor(b.minx / CELL), x1 = Math.floor(b.maxx / CELL);
+      const z0 = Math.floor(b.minz / CELL), z1 = Math.floor(b.maxz / CELL);
+      for (let gx = x0; gx <= x1; gx++) {
+        for (let gz = z0; gz <= z1; gz++) {
+          const k = gx + gz * 8192;
+          let cell = this.grid.get(k);
+          if (!cell) this.grid.set(k, (cell = []));
+          cell.push(b);
+        }
+      }
+    }
+    this.gridDirty = false;
+  }
+
+  private eachOverlapped(minx: number, minz: number, maxx: number, maxz: number, fn: (b: Collider) => void) {
+    this.ensureGrid();
+    const st = ++this.stamp;
+    const x0 = Math.floor(minx / CELL), x1 = Math.floor(maxx / CELL);
+    const z0 = Math.floor(minz / CELL), z1 = Math.floor(maxz / CELL);
+    for (let gx = x0; gx <= x1; gx++) {
+      for (let gz = z0; gz <= z1; gz++) {
+        const cell = this.grid.get(gx + gz * 8192);
+        if (!cell) continue;
+        for (const b of cell) {
+          if (b.q === st) continue;
+          b.q = st;
+          fn(b);
+        }
+      }
+    }
   }
 
   private overlaps(c: Collider, minx: number, miny: number, minz: number, maxx: number, maxy: number, maxz: number) {
@@ -55,10 +100,20 @@ export class World {
     let onGround = false;
     let hitWall = false;
     let stepped = false;
-    // which way the last wall pushed back, so a wall jump has something to kick off
     let wallNormal: THREE.Vector3 | null = null;
 
-    // vertical
+    const cands = this._cands;
+    cands.length = 0;
+    this.eachOverlapped(
+      Math.min(pos.x, pos.x + vel.x * dt) - halfW - EPS,
+      Math.min(pos.z, pos.z + vel.z * dt) - halfW - EPS,
+      Math.max(pos.x, pos.x + vel.x * dt) + halfW + EPS,
+      Math.max(pos.z, pos.z + vel.z * dt) + halfW + EPS,
+      (b) => {
+        cands.push(b);
+      },
+    );
+
     const prevY = pos.y;
     pos.y += vel.y * dt;
     {
@@ -68,12 +123,8 @@ export class World {
         maxy = pos.y + height;
       const minz = pos.z - halfW,
         maxz = pos.z + halfW;
-      for (const b of this.boxes) {
+      for (const b of cands) {
         if (!this.overlaps(b, minx, miny, minz, maxx, maxy, maxz)) continue;
-        // Land if the feet were at or above this surface *before* the step. The
-        // post-move test alone let anything falling fast enough clear the
-        // threshold in one frame and drop straight through the floor — which is
-        // how bots ended up under the map, apparently outside it.
         const wasAbove = prevY + EPS >= b.maxy;
         if (vel.y <= 0 && (wasAbove || pos.y + height * 0.5 > b.maxy)) {
           pos.y = b.maxy + EPS;
@@ -95,7 +146,7 @@ export class World {
         maxy = pos.y + height;
       const minz = pos.z - halfW,
         maxz = pos.z + halfW;
-      for (const b of this.boxes) {
+      for (const b of cands) {
         if (!this.overlaps(b, minx, miny, minz, maxx, maxy, maxz)) continue;
         const stepH = b.maxy - pos.y;
         if (onGround && stepH > 0 && stepH <= 0.45 && b.maxy < pos.y + height * 0.55) {
@@ -129,8 +180,6 @@ export class World {
     pos.x = Math.max(this.bounds.minX + halfW, Math.min(this.bounds.maxX - halfW, pos.x));
     pos.z = Math.max(this.bounds.minZ + halfW, Math.min(this.bounds.maxZ - halfW, pos.z));
     if (pos.y < -4) {
-      // last resort: put them back on whatever solid ground is above, not at
-      // y=0, which could be inside a building
       pos.y = this.groundY(pos.x, pos.z);
       vel.set(0, 0, 0);
       onGround = true;
@@ -145,10 +194,56 @@ export class World {
       maxy = pos.y + height;
     const minz = pos.z - halfW,
       maxz = pos.z + halfW;
-    for (const b of this.boxes) {
-      if (this.overlaps(b, minx, miny, minz, maxx, maxy, maxz)) return true;
+    let blocked = false;
+    this.eachOverlapped(minx, minz, maxx, maxz, (b) => {
+      if (this.overlaps(b, minx, miny, minz, maxx, maxy, maxz)) blocked = true;
+    });
+    return blocked;
+  }
+
+  private rayHitT(o: THREE.Vector3, d: THREE.Vector3, maxDist: number, skipNoShoot: boolean) {
+    this.ensureGrid();
+    const st = ++this.stamp;
+    let best = maxDist;
+    let hit: Collider | null = null;
+
+    let cx = Math.floor(o.x / CELL),
+      cz = Math.floor(o.z / CELL);
+    const stepX = d.x > 0 ? 1 : -1,
+      stepZ = d.z > 0 ? 1 : -1;
+    const tDX = Math.abs(d.x) > 1e-9 ? CELL / Math.abs(d.x) : Infinity;
+    const tDZ = Math.abs(d.z) > 1e-9 ? CELL / Math.abs(d.z) : Infinity;
+    let tMaxX = Math.abs(d.x) > 1e-9 ? ((cx + (stepX > 0 ? 1 : 0)) * CELL - o.x) / d.x : Infinity;
+    let tMaxZ = Math.abs(d.z) > 1e-9 ? ((cz + (stepZ > 0 ? 1 : 0)) * CELL - o.z) / d.z : Infinity;
+
+    for (;;) {
+      const cell = this.grid.get(cx + cz * 8192);
+      if (cell) {
+        for (const b of cell) {
+          if (b.q === st) continue;
+          b.q = st;
+          if (skipNoShoot && b.noShoot) continue;
+          const t = rayAabb(o, d, b, best);
+          if (t !== null && t < best && t >= 0) {
+            best = t;
+            hit = b;
+          }
+        }
+      }
+      let t: number;
+      if (tMaxX < tMaxZ) {
+        t = tMaxX;
+        tMaxX += tDX;
+        cx += stepX;
+      } else {
+        t = tMaxZ;
+        tMaxZ += tDZ;
+        cz += stepZ;
+      }
+      if (t > best) break;
     }
-    return false;
+    this._hitBox = hit;
+    return hit ? best : -1;
   }
 
   raycast(
@@ -157,34 +252,25 @@ export class World {
     maxDist: number,
     skipNoShoot = false,
   ): { dist: number; point: THREE.Vector3; nx: number; ny: number; nz: number; box: Collider } | null {
-    let best = maxDist;
-    let hit: Collider | null = null;
+    const best = this.rayHitT(o, d, maxDist, skipNoShoot);
+    if (best < 0) return null;
+    const hit = this._hitBox!;
+    const px = o.x + d.x * best,
+      py = o.y + d.y * best,
+      pz = o.z + d.z * best;
     let nx = 0,
-      ny = 1,
+      ny = 0,
       nz = 0;
-    for (const b of this.boxes) {
-      if (skipNoShoot && b.noShoot) continue;
-      const t = rayAabb(o, d, b, best);
-      if (t !== null && t < best && t >= 0) {
-        best = t;
-        hit = b;
-        const px = o.x + d.x * t,
-          py = o.y + d.y * t,
-          pz = o.z + d.z * t;
-        const e = 0.02;
-        nx = ny = nz = 0;
-        if (Math.abs(px - b.minx) < e) nx = -1;
-        else if (Math.abs(px - b.maxx) < e) nx = 1;
-        else if (Math.abs(py - b.miny) < e) ny = -1;
-        else if (Math.abs(py - b.maxy) < e) ny = 1;
-        else if (Math.abs(pz - b.minz) < e) nz = -1;
-        else nz = 1;
-      }
-    }
-    if (!hit) return null;
+    const e = 0.02;
+    if (Math.abs(px - hit.minx) < e) nx = -1;
+    else if (Math.abs(px - hit.maxx) < e) nx = 1;
+    else if (Math.abs(py - hit.miny) < e) ny = -1;
+    else if (Math.abs(py - hit.maxy) < e) ny = 1;
+    else if (Math.abs(pz - hit.minz) < e) nz = -1;
+    else nz = 1;
     return {
       dist: best,
-      point: new THREE.Vector3(o.x + d.x * best, o.y + d.y * best, o.z + d.z * best),
+      point: new THREE.Vector3(px, py, pz),
       nx,
       ny,
       nz,
@@ -192,8 +278,6 @@ export class World {
     };
   }
 
-  // How much solid there is straight ahead from a surface hit. A bullet is only
-  // allowed through thin cover, so the exit point matters more than the hit.
   thickness(point: THREE.Vector3, d: THREE.Vector3, b: Collider): number {
     const inside = new THREE.Vector3(point.x + d.x * EPS, point.y + d.y * EPS, point.z + d.z * EPS);
     let far = 0;
@@ -208,11 +292,6 @@ export class World {
     return far;
   }
 
-  /**
-   * A trace that is allowed through one thin surface. `penAt` is how far along
-   * the ray that surface sat — anything hit past it was shot through cover and
-   * should be scored at {@link PEN_DAMAGE}.
-   */
   penTrace(
     o: THREE.Vector3,
     d: THREE.Vector3,
@@ -236,12 +315,11 @@ export class World {
   }
 
   hasLineOfSight(a: THREE.Vector3, b: THREE.Vector3) {
-    const d = new THREE.Vector3().subVectors(b, a);
+    const d = this._los.subVectors(b, a);
     const dist = d.length();
     if (dist < 0.01) return true;
     d.multiplyScalar(1 / dist);
-    const hit = this.raycast(a, d, dist - 0.2);
-    return !hit;
+    return this.rayHitT(a, d, dist - 0.2, false) < 0;
   }
 
   groundY(x: number, z: number, fromY = 40) {
@@ -255,30 +333,23 @@ export class World {
 function rayAabb(o: THREE.Vector3, d: THREE.Vector3, b: Collider, maxT: number): number | null {
   let tmin = 0;
   let tmax = maxT;
-  const axes: Array<["x" | "y" | "z", number, number]> = [
-    ["x", b.minx, b.maxx],
-    ["y", b.miny, b.maxy],
-    ["z", b.minz, b.maxz],
-  ];
-  for (const [axis, min, max] of axes) {
-    const origin = o[axis];
-    const dir = d[axis];
-    if (Math.abs(dir) < 1e-8) {
-      if (origin < min || origin > max) return null;
-    } else {
-      const inv = 1 / dir;
-      let t1 = (min - origin) * inv;
-      let t2 = (max - origin) * inv;
-      if (t1 > t2) {
-        const tmp = t1;
-        t1 = t2;
-        t2 = tmp;
-      }
-      tmin = Math.max(tmin, t1);
-      tmax = Math.min(tmax, t2);
-      if (tmin > tmax) return null;
+  const slab = (origin: number, dir: number, min: number, max: number) => {
+    if (Math.abs(dir) < 1e-8) return origin < min || origin > max ? false : true;
+    const inv = 1 / dir;
+    let t1 = (min - origin) * inv;
+    let t2 = (max - origin) * inv;
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
     }
-  }
+    tmin = Math.max(tmin, t1);
+    tmax = Math.min(tmax, t2);
+    return tmin <= tmax;
+  };
+  if (!slab(o.x, d.x, b.minx, b.maxx)) return null;
+  if (!slab(o.y, d.y, b.miny, b.maxy)) return null;
+  if (!slab(o.z, d.z, b.minz, b.maxz)) return null;
   return tmin;
 }
 

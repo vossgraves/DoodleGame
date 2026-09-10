@@ -2,12 +2,6 @@ import { sql } from "./_lib/db";
 import { requireUser } from "./_lib/auth";
 import { bad, handler, methodIs, readBody, type ApiRequest, type ApiResponse } from "./_lib/http";
 
-/**
- * Match results are self-reported, because in a peer-to-peer game there is no
- * server that saw the match. Values are clamped so a bad or malicious client
- * cannot post a nonsense score, but this is a friendly leaderboard, not a
- * tamper-proof one — say so rather than implying otherwise.
- */
 const clamp = (v: unknown, max: number) => {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.floor(v) : 0;
   if (n < 0) throw bad("counts cannot be negative");

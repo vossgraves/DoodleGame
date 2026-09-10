@@ -1,30 +1,17 @@
 import type { WeaponKind } from "./player";
 import { INK } from "./renderer";
 
-/**
- * Cosmetics. The art style is ink on paper, so a "skin" here is which pens the
- * gun was drawn with — the outline ink, the ink its dark parts get, and an
- * accent used for bands and fills. Camos unlock progressively off kills with
- * that specific weapon, the way they should: the gun earns its own paint.
- */
-
 export interface Camo {
   id: string;
   name: string;
   blurb: string;
-  /** kills with that weapon needed to unlock */
   need: number;
-  /** outline ink for the body */
   ink: number;
-  /** ink for the grip, stock and other dark parts */
   dark: number;
-  /** ink for muzzle flash, dots and bands */
   accent: number;
-  /** draw the body as a solid fill instead of hatching */
   fill?: boolean;
   shadeScale?: number;
   shadeBias?: number;
-  /** wrap bands down the barrel, in the accent ink */
   bands?: number;
 }
 
@@ -146,14 +133,12 @@ export const STICKERS: Sticker[] = [
   { id: "blot", name: "SPLAT", blurb: "the pen leaked", need: 110, glyph: "blot", ink: INK.PINK },
 ];
 
-/** What a single weapon is wearing. */
 export interface WeaponSkin {
   camo?: string;
   charm?: string;
   sticker?: string;
 }
 export type Wardrobe = Partial<Record<WeaponKind, WeaponSkin>>;
-/** Confirmed kills per weapon — what unlocks everything above. */
 export type KillLog = Partial<Record<WeaponKind, number>>;
 
 const CAMO_BY_ID = new Map(CAMOS.map((c) => [c.id, c]));
@@ -190,11 +175,6 @@ export function sanitizeKills(raw: unknown): KillLog {
   return out;
 }
 
-/**
- * Strip anything the player has not earned yet. Called whenever a wardrobe
- * arrives from storage, so an edited localStorage entry cannot dress a gun in
- * paint it never unlocked.
- */
 export function enforceUnlocks(w: Wardrobe, kills: KillLog): Wardrobe {
   const out: Wardrobe = {};
   for (const [kind, skin] of Object.entries(w) as [WeaponKind, WeaponSkin][]) {
@@ -211,7 +191,6 @@ export function enforceUnlocks(w: Wardrobe, kills: KillLog): Wardrobe {
   return out;
 }
 
-/** The next thing this weapon is working towards, for the progress line. */
 export function nextCamo(kills: number): { camo: Camo; left: number } | null {
   const next = CAMOS.find((c) => c.need > kills);
   return next ? { camo: next, left: next.need - kills } : null;

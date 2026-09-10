@@ -5,8 +5,6 @@ import { unauthorized, bad, type ApiRequest } from "./http";
 
 const scrypt = promisify(scryptCb) as (pw: string, salt: Buffer, len: number, opts: object) => Promise<Buffer>;
 
-// Deliberately slow. This is the only thing standing between a leaked table and
-// everyone's password, and it doubles as brute-force friction on login.
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 const KEY_LEN = 32;
 const SESSION_DAYS = 30;
@@ -42,7 +40,6 @@ export async function verifyPassword(pw: string, stored: string): Promise<boolea
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-/** Only the hash is stored, so a database leak does not hand out live sessions. */
 const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
 
 export async function createSession(userId: string): Promise<{ token: string; expiresAt: string }> {
@@ -71,7 +68,6 @@ export interface SessionUser {
   username: string;
 }
 
-/** Resolve the caller, or throw 401. Expired rows are swept as they are found. */
 export async function requireUser(req: ApiRequest): Promise<SessionUser> {
   const token = bearer(req);
   if (!token) throw unauthorized();

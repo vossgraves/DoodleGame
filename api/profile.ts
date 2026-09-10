@@ -2,7 +2,6 @@ import { sql } from "./_lib/db";
 import { requireUser } from "./_lib/auth";
 import { bad, handler, methodIs, readBody, type ApiRequest, type ApiResponse } from "./_lib/http";
 
-/** Keep stored blobs small and shaped; the client is not trusted to be honest. */
 function cleanLoadout(v: unknown): string[] {
   if (!Array.isArray(v)) throw bad("loadout must be an array");
   if (v.length > 8) throw bad("loadout is too long");
