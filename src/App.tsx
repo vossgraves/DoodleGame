@@ -43,7 +43,6 @@ const GUNS = WEAPONS.filter((w) => w.isGun);
 const MELEE = WEAPONS.filter((w) => !w.isGun);
 const isGun = (k: WeaponKind) => GUNS.some((g) => g.kind === k);
 
-/** The six inks the art style is built from — indexes match INK in renderer.ts. */
 const INK_SWATCHES = [
   { ink: 0, name: "blue", hex: "#1a30c0" },
   { ink: 1, name: "red", hex: "#d02030" },
@@ -151,7 +150,6 @@ function isTouchDevice() {
   return "ontouchstart" in window || navigator.maxTouchPoints > 0;
 }
 
-/** A HUD with something in every slot, so it can be arranged outside a match. */
 const previewHud = (): HudSnap => ({
   ...emptyHud(),
   hp: 84,
@@ -173,7 +171,6 @@ const previewHud = (): HudSnap => ({
   skillCharge: 0.6,
 });
 
-/** Portrait cannot fit a stick, a fire button and a readable HUD side by side. */
 function RotatePrompt() {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center p-6 paper-bg">
@@ -196,11 +193,6 @@ function RotatePrompt() {
   );
 }
 
-/**
- * The tap that buys fullscreen. It only appears while an intent is armed, and
- * the window-level listener will usually spend it first — this is the visible
- * affordance for anyone who rotates and then hesitates.
- */
 function FullscreenNudge({ onDone }: { onDone: () => void }) {
   return (
     <button
@@ -227,13 +219,10 @@ export default function App() {
   const [wardrobe, setWardrobe] = useState<Wardrobe>(() => loadWardrobe(loadKills()));
   const [playerName, setPlayerName] = useState(() => localStorage.getItem("doodle_name") || "");
   const [matchMode, setMatchMode] = useState<MatchMode>("ffa");
-  // MatchNet lives outside React; bump this to re-read it
   const [netTick, setNetTick] = useState(0);
   const [swapping, setSwapping] = useState(false);
   const [emoteOpen, setEmoteOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
-  // settings reached from the pause menu ride over the match; changing `screen`
-  // would tear the Game down and lose it
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hudEdit, setHudEdit] = useState(false);
   const [hudLayout, setHudLayout] = useState<HudLayout>(hudpos.load);
@@ -249,7 +238,6 @@ export default function App() {
   const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
   const [adsToggle, setAdsToggle] = useState(localStorage.getItem("doodle_ads_toggle") === "1");
-  // a thumb on glass needs the help; a mouse does not, so it starts off there
   const [assist, setAssist] = useState<AimAssist>(() => {
     const s = localStorage.getItem("doodle_assist");
     return isAimAssist(s) ? s : isTouchDevice() ? "assist" : "off";
@@ -261,10 +249,9 @@ export default function App() {
     const s = localStorage.getItem("doodle_quality");
     return isQuality(s) ? s : defaultQuality();
   });
-  // a phone rendering 120 frames it cannot sustain is just a hand warmer
   const [fpsCap, setFpsCap] = useState(() => {
     const s = localStorage.getItem("doodle_fps");
-    return s === null ? (isTouchDevice() ? 60 : 0) : Number(s);
+    return s === null ? 60 : Number(s);
   });
   const [night, setNight] = useState(() => localStorage.getItem("doodle_night") === "1");
   const [fsWanted, setFsWanted] = useState(() => fullscreen.wanted());
@@ -277,8 +264,6 @@ export default function App() {
   const [runId, setRunId] = useState(0);
   const [locked, setLocked] = useState(false);
   const hudLatest = useRef(hud);
-  // Read through a ref when building the Game. If `loadout` were a dependency of
-  // that effect, swapping kit mid-match would tear the whole match down.
   const loadoutRef = useRef(loadout);
   loadoutRef.current = loadout;
   const gunsmithRef = useRef(gunsmith);
@@ -293,18 +278,17 @@ export default function App() {
   rankedRef.current = ranked;
   const srRef = useRef(sr);
   srRef.current = sr;
-  // same reason: editing your name in the lobby used to rebuild the match
   const nameRef = useRef(playerName);
   nameRef.current = playerName;
   const killsRef = useRef(weaponKills);
   killsRef.current = weaponKills;
+  const uiBusyRef = useRef(false);
+  uiBusyRef.current = emoteOpen || chatOpen || swapping || settingsOpen || hudEdit;
 
   useEffect(() => {
     setTouch(isTouchDevice());
   }, []);
 
-  // The controls assume landscape — the thumb zones need the width. Track
-  // orientation so portrait gets a rotate prompt instead of a broken layout.
   useEffect(() => {
     const mq = window.matchMedia("(orientation: portrait)");
     const update = () => setPortrait(mq.matches);
@@ -313,8 +297,6 @@ export default function App() {
     return () => mq.removeEventListener("change", update);
   }, []);
 
-  // Rotating to landscape arms fullscreen; the next touch spends it. Only on a
-  // touch device — a desktop browser taking over the screen unasked is rude.
   useEffect(() => {
     if (!touch) return;
     return fullscreen.install(({ full, pending }) => {
@@ -323,13 +305,10 @@ export default function App() {
     });
   }, [touch]);
 
-  // the window can lapse while the menu is open; do not leave it stranded
   useEffect(() => {
     if (swapping && !hud.canSwap) setSwapping(false);
   }, [swapping, hud.canSwap]);
 
-  // HUD overrides go in as a stylesheet appended after the app's own, so they
-  // win on equal specificity without every component knowing about them
   useEffect(() => {
     let tag = document.getElementById("hud-overrides") as HTMLStyleElement | null;
     if (!tag) {
@@ -340,13 +319,11 @@ export default function App() {
     tag.textContent = hudpos.css(hudLayout);
   }, [hudLayout]);
 
-  // the hitmarker is CSS, so the chosen hit colour rides in as a variable
   useEffect(() => {
     const hex = INK_SWATCHES[hitInk]?.hex;
     if (hex) document.documentElement.style.setProperty("--hit", hex);
   }, [hitInk]);
 
-  // live-apply the colours and graphics preset without a restart
   useEffect(() => {
     const g = gameRef.current;
     if (!g) return;
@@ -359,7 +336,6 @@ export default function App() {
     g.applySensitivity(sens);
   }, [hitInk, tracerInk, quality, adsToggle, assist, fpsCap, sens, runId, screen]);
 
-  // Resume a saved session if there is one. No backend just means stay signed out.
   useEffect(() => {
     let cancelled = false;
     account.me().then((r) => {
@@ -396,8 +372,6 @@ export default function App() {
     };
   }, []);
 
-  // Weapon kills accumulate through a match; push them to the profile once, on
-  // the way out. Saving per kill would be one API call every second or two.
   useEffect(() => {
     if (screen === "game") return;
     if (!Object.keys(killsRef.current).length) return;
@@ -468,9 +442,12 @@ export default function App() {
     g.match.name = (nameRef.current || "doodle").slice(0, 14);
     g.match.mapKey = mapKey;
     g.match.mode = matchMode;
-    g.input.onLockChange = (l) => setLocked(l);
-    // Opt-in inspection handle. A P2P lobby has no server to look at, so this is
-    // the only way to see what your client actually believes about a live match.
+    g.input.onLockChange = (l) => {
+      setLocked(l);
+      if (!l && g.state === "playing" && !g.input.textMode && !uiBusyRef.current && !g.hud.canSwap) {
+        g.pause();
+      }
+    };
     if (localStorage.getItem("doodle_debug") === "1") {
       (window as unknown as { __doodle?: Game }).__doodle = g;
     }
@@ -567,7 +544,6 @@ export default function App() {
           onChange={(l) => {
             setLoadout(l);
             localStorage.setItem("doodle_loadout", JSON.stringify(l));
-            // coalesced: tapping through chips must not be one API call each
             account.saveProfileSoon(l, { gunsmith, skins: wardrobe, wkills: weaponKills });
           }}
           onGunsmith={(g) => {
@@ -688,7 +664,6 @@ export default function App() {
 
       {screen === "game" && (
         <>
-          {/* the editor drags the real HUD, so it has to stay up while paused */}
           <HUD
             hud={hud}
             hidden={(gstate === "paused" && !hudEdit) || gstate === "dead" || !!hud.killCam}
@@ -804,8 +779,6 @@ export default function App() {
         </>
       )}
 
-      {/* Arranging the HUD works from the menu as well as mid-match; outside one
-          there is no HUD to drag, so a stand-in is put up to drag instead. */}
       {hudEdit && (
         <>
           {screen !== "game" && (
@@ -886,7 +859,6 @@ function Menu({
   );
 }
 
-/** Tier name, SR, and how far through the tier you are. */
 function RankBadge({ sr, swing }: { sr: number; swing?: number }) {
   const tier = tierOf(sr);
   const next = nextTier(sr);
@@ -905,7 +877,6 @@ function RankBadge({ sr, swing }: { sr: number; swing?: number }) {
   );
 }
 
-/** Pick a mode, and for the multiplayer ones a map, before anything connects. */
 function ModePicker({
   mapKey,
   onMap,
@@ -1219,7 +1190,6 @@ function Settings({
   tracerInk: number;
   onHitInk: (v: number) => void;
   onTracerInk: (v: number) => void;
-  /** true when this is layered over a running match rather than its own screen */
   overlay?: boolean;
   hudPreset: string;
   onHudPreset: (v: string) => void;
@@ -1399,11 +1369,6 @@ function Settings({
   );
 }
 
-/**
- * Key rebinding. Clicking a row arms it; the next key press takes the slot and
- * is stripped from wherever else it was bound, because two actions on one key
- * is never what anyone meant.
- */
 function Rebinder() {
   const [arming, setArming] = useState<string | null>(null);
   const [, bump] = useState(0);
@@ -1604,7 +1569,7 @@ function Online({
   const [, setBump] = useState(0);
   const bump = () => setBump((n) => n + 1);
   const m: MatchNet | null = gameRef.current?.match ?? null;
-  void tick; // re-render trigger; the match object itself is mutable
+  void tick;
   if (!m) return null;
 
   const run = async (label: string, fn: () => Promise<unknown>) => {
@@ -1618,7 +1583,6 @@ function Online({
     setBusy("");
   };
 
-  // ---- in a match: a small, non-blocking score panel ----
   if (m.state === "playing") {
     const rows = m.scoreboard().slice(0, 4);
     const target = SCORE_TARGET[m.mode];
@@ -1649,7 +1613,6 @@ function Online({
     );
   }
 
-  // ---- match over ----
   if (m.state === "over") {
     const board = m.scoreboard();
     const mvp = board[0];
@@ -1718,7 +1681,6 @@ function Online({
     );
   }
 
-  // ---- in a lobby, waiting to start ----
   if (m.state === "lobby") {
     const rows = [...m.roster.values()];
     return (
@@ -1802,7 +1764,6 @@ function Online({
     );
   }
 
-  // ---- not connected yet ----
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center overflow-y-auto bg-[rgba(246,243,230,0.72)] p-4">
       <div className="ink-panel w-full max-w-[560px] px-8 py-7 text-center">
@@ -1838,7 +1799,6 @@ function Online({
               setBusy("looking for a lobby");
               setErr("");
               try {
-                // hunts for real players for 40s, then opens a bot lobby
                 await m.quickPlay((s) => setBusy(s));
               } catch (e) {
                 setErr(e instanceof Error ? e.message : String(e));
@@ -1898,11 +1858,6 @@ function Online({
   );
 }
 
-/**
- * The eight numbers the gunsmith reports back. Each is normalised to 0–1 on a
- * fixed scale so a bar means the same thing on a pistol as on an LMG, and so
- * the base and built bars can be drawn on top of one another.
- */
 const STAT_ROWS: { name: string; of: (d: ReturnType<typeof weaponDef>) => number }[] = [
   { name: "damage", of: (d) => d.damage / 60 },
   { name: "fire rate", of: (d) => 1 / d.interval / 14 },
@@ -1916,12 +1871,6 @@ const STAT_ROWS: { name: string; of: (d: ReturnType<typeof weaponDef>) => number
 
 const pct = (v: number) => `${Math.round(Math.max(0.02, Math.min(1, v)) * 100)}%`;
 
-/**
- * The gunsmith: four rails, one part each. Every chip spells out what it costs
- * you as well as what it buys, because an attachment that was pure upside
- * would just be a stat the gun should have had.
- */
-/** One locked-or-earned cosmetic chip. */
 function CosChip({
   name,
   blurb,
@@ -1978,7 +1927,6 @@ function Gunsmith({
   const base = weaponDef(kind);
   const built = applyBuild(base, build);
   const fitted = SLOTS.filter((s) => build[s.id]).length;
-  // a blade has no rails to hang anything off, so it only gets the cosmetics
   const rails = !!WEAPONS.find((w) => w.kind === kind)?.isGun;
   const [tab, setTab] = useState<"rails" | "camo" | "charm" | "sticker">(rails ? "rails" : "camo");
   const goal = nextCamo(kills);
@@ -2169,7 +2117,6 @@ function LoadoutScreen({
 
   const setSlot = (slot: number, kind: WeaponKind) => {
     const next = [...carried];
-    // if that gun already sits in another slot, swap them rather than carry it twice
     const existing = next.indexOf(kind);
     if (existing >= 0 && existing !== slot) next[existing] = next[slot];
     next[slot] = kind;
@@ -2311,14 +2258,6 @@ function LoadoutScreen({
   );
 }
 
-/**
- * Minimap. Up is always the way you are facing, so the whole map rotates around
- * you rather than the other way about.
- *
- * Canvas rather than SVG: a map's footprint is a couple of hundred rects, and as
- * SVG that was a couple of hundred DOM nodes rebuilt and re-diffed twenty times
- * a second, right next to a 3D scene competing for the same phone.
- */
 function Minimap({ hud }: { hud: HudSnap }) {
   const ref = useRef<HTMLCanvasElement | null>(null);
 
@@ -2335,8 +2274,6 @@ function Minimap({ hud }: { hud: HudSnap }) {
     const g = cv.getContext("2d");
     if (!g) return;
     const R = w / 2;
-    // how much world fits in the disc: closer in than the whole map, or a big
-    // map shrinks to an unreadable smudge
     const half = Math.min(hud.radarHalf || 40, 34);
     const scale = (R - 3 * dpr) / half;
     const me = hud.radarSelf;
@@ -2374,7 +2311,6 @@ function Minimap({ hud }: { hud: HudSnap }) {
     }
     g.restore();
 
-    // north pip, then everyone else, then you — always centred, always up
     g.strokeStyle = "#1a30c0";
     g.lineWidth = 2.5 * dpr;
     g.lineCap = "round";
@@ -2421,10 +2357,6 @@ function Minimap({ hud }: { hud: HudSnap }) {
   );
 }
 
-/**
- * The emote wheel. Opening it releases the pointer lock, because picking a
- * segment with a locked cursor is impossible; closing it takes the lock back.
- */
 function EmoteWheel({
   gameRef,
   touch,
@@ -2497,11 +2429,6 @@ function EmoteWheel({
   );
 }
 
-/**
- * Lobby chat. It rides the P2P mesh the match already keeps open, so it costs
- * nothing to run and works in a private room with no backend at all. Enter opens
- * it and releases the pointer; enter again sends and takes the lock back.
- */
 function Chat({
   gameRef,
   tick,
@@ -2521,8 +2448,6 @@ function Chat({
   const m = gameRef.current?.match;
   void tick;
 
-  // Read `open` through a ref: the listener is registered once, so a stale
-  // closure cannot re-open the box on the very keypress that just closed it.
   const isOpen = useRef(open);
   isOpen.current = open;
   useEffect(() => {
@@ -2654,7 +2579,6 @@ const STREAK_LABELS: Record<string, string> = {
   swarm: "SWARM",
 };
 
-/** Earned streaks, bottom-left, the way every shooter puts them. */
 function StreakTray({ hud, onUse }: { hud: HudSnap; onUse: (k: string) => void }) {
   if (!hud.streakReady.length) return null;
   return (
@@ -2671,7 +2595,6 @@ function StreakTray({ hud, onUse }: { hud: HudSnap; onUse: (k: string) => void }
   );
 }
 
-/** Rounded rifle round, PUBG-style, so the ammo count reads at a glance. */
 function Bullet() {
   return (
     <svg className="bullet" viewBox="0 0 24 24" aria-hidden="true">
@@ -2728,7 +2651,6 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
       {hud.uav && <div className="uav-flag hud-bit">UAV</div>}
       {hud.piloting && <div className="pilot-flag hud-bit">steering · drag to fly</div>}
 
-      {/* waves are a PvE idea; the arena has none */}
       {hud.mode !== "arena" && (
         <div className="hud-tr hud-bit">
           <div>
@@ -2751,13 +2673,9 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
       )}
 
       {touch ? (
-        /* Everything lives in the strip between the two thumb zones, so nothing
-           can sit under the stick or the fire button. */
         <div className="m-deck hud-bit">
           <div className="m-weapons">
             {hud.slots.map((s, i) => (
-              /* only the equipped gun is named; the rest stay as numbered stubs
-                 so the row cannot outgrow the space between the thumbs */
               <div key={s.name} className={`m-wep ${s.active ? "on" : ""} ${s.empty ? "empty" : ""}`}>
                 <span className="n">{i + 1}</span>
                 <div className="stack">
@@ -2768,7 +2686,6 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
               </div>
             ))}
           </div>
-          {/* one DOM, two arrangements: the preset only changes .m-row's axis */}
           <div className="m-row">
             <div className="m-hp">
               <div className="bar">
@@ -2887,11 +2804,6 @@ function HUD({ hud, hidden, touch, preset }: { hud: HudSnap; hidden: boolean; to
   );
 }
 
-/**
- * Drag the HUD where you want it. Handles are measured from wherever each piece
- * currently sits, so the CSS stays the single source of the defaults and this
- * only records the difference.
- */
 function HudEditor({
   layout,
   onChange,
@@ -2905,7 +2817,6 @@ function HudEditor({
   const [picked, setPicked] = useState<string | null>(null);
   const dragging = useRef<string | null>(null);
 
-  // measure where everything is right now, once the HUD has laid out
   useEffect(() => {
     const measure = () => {
       const found: Record<string, { x: number; y: number; w: number; h: number }> = {};
@@ -3128,7 +3039,6 @@ const ICONS: Record<string, React.ReactNode> = {
   ),
   grapple: (
     <>
-      {/* a hook on a line */}
       <path d="M4 4l9 9" />
       <path d="M17 11a4 4 0 1 1-4 4V9" />
     </>
@@ -3178,8 +3088,6 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
   const lookId = useRef<number | null>(null);
   const lastLook = useRef({ x: 0, y: 0 });
   const joyId = useRef<number | null>(null);
-  // Pointers that began on an action button. They keep the button held AND steer
-  // the camera, so one thumb can hold FIRE and aim without a second finger.
   const dragLook = useRef(new Map<number, { x: number; y: number }>());
 
   const setBtn = (name: string, down: boolean) => {
@@ -3265,7 +3173,6 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      // capture on the button, not the <svg> icon inside it
       e.currentTarget.setPointerCapture(e.pointerId);
       trackDrag(e);
       setBtn(name, true);

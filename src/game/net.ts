@@ -1,25 +1,11 @@
-// Peer-to-peer transport over WebRTC.
-//
-// There is no game server. The host player's browser is the authority and every
-// other player connects straight to it, which is what lets online play work from
-// a plain static deploy.
-//
-// A lobby code *is* the host's peer id. Private lobbies take a random 5-letter
-// code; public lobbies claim one of a handful of well-known slots (PUB0..PUB7)
-// so quick play can knock on every slot at once — a directory with no directory
-// server. A connection only counts once the host answers with a welcome, so a
-// full or closed lobby is skipped rather than hung on.
-
 import Peer, { type DataConnection } from "peerjs";
 import { Guard, validPeerMessage, gameplayAllowed } from "./guard";
 
 const LOCAL_HOST = /^(localhost|127\.0\.0\.1|\[::1\])$/;
 const isLocal = typeof location !== "undefined" && LOCAL_HOST.test(location.hostname);
-/** dev servers get their own namespace so testing never wanders into a live lobby */
 const PREFIX = isLocal ? "doodledev-" : "doodledistrict-";
 
 const PUBLIC_SLOTS = 8;
-/** no I/O/0/1 — these get read aloud and typed in by hand */
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const CODE_LENGTH = 5;
 
@@ -45,10 +31,6 @@ export interface PeerMeta {
 
 type Handler = (data: never, from: string) => void;
 
-/**
- * Signalling defaults to the public PeerJS broker. Tests and self-hosted
- * deployments can point it elsewhere without touching the code.
- */
 function peerOptions() {
   const opts: ConstructorParameters<typeof Peer>[1] = {
     debug: 0,
@@ -69,12 +51,10 @@ function peerOptions() {
       opts.secure = localStorage.getItem("doodle_peer_secure") === "1";
     }
   } catch {
-    /* storage unavailable; stay on the public broker */
   }
   return opts;
 }
 
-/** PeerJS reports an unreachable peer by name only inside the error text. */
 const idFromError = (err: unknown) => {
   const m = /peer\s+(\S+)/.exec(String((err as Error)?.message || ""));
   return m ? m[1] : null;
@@ -88,7 +68,6 @@ export class Net {
   isPublic = false;
   accepting = true;
   connected = false;
-  /** 10 so team deathmatch can run a full 5v5; the host relays for everyone else */
   maxPlayers = 10;
   id: string | null = null;
   code: string | null = null;
@@ -97,7 +76,6 @@ export class Net {
   onPeerJoin: ((id: string, meta: PeerMeta) => void) | null = null;
   onPeerLeave: ((id: string) => void) | null = null;
   onDisconnect: (() => void) | null = null;
-  /** a peer said something it is not allowed to say */
   onViolation: ((pid: string, reason: string, repeated: boolean) => void) | null = null;
 
   private handlers = new Map<string, Handler>();
@@ -172,10 +150,7 @@ export class Net {
   }
 
   private route(msg: NetMessage, from: string) {
-    // `from` is the connection a message actually arrived on — never the `from`
-    // field inside it, which a peer can set to anybody it likes.
     if (!this.vet(msg, from)) return;
-    // clients can address each other; the host forwards on their behalf
     if (this.isHost && msg.to && msg.to !== this.id) {
       const c = this.conns.get(msg.to);
       if (c?.open) c.send({ t: msg.t, d: msg.d, to: msg.to, from });
@@ -187,12 +162,6 @@ export class Net {
     this.emit(msg.t, msg.d, from);
   }
 
-  /**
-   * Everything a peer sends goes through here. A client also vets what the host
-   * sends it for shape, but grants it the host-only types — in a match with no
-   * server the host is the referee, and a client that will not hear it cannot
-   * play.
-   */
   private vet(msg: NetMessage, from: string): boolean {
     if (!this.isHost && from === this.hostId) return true;
     if (validPeerMessage(msg) && gameplayAllowed(this.guard, msg, from, this.id || "", (pid, why) => this.flag(pid, why)))
@@ -204,7 +173,6 @@ export class Net {
   private flag(pid: string, reason: string) {
     const repeated = this.guard.repeated(pid, reason);
     this.onViolation?.(pid, reason, repeated);
-    // only the host can act on it, and only once it has happened again and again
     if (repeated && this.isHost && this.conns.has(pid)) {
       const c = this.conns.get(pid);
       if (c?.open) c.send({ t: "refused", d: { reason: "dropped: " + reason }, from: this.id });
@@ -219,13 +187,10 @@ export class Net {
         try {
           peer.reconnect();
         } catch {
-          /* the next heartbeat will try again */
         }
       }
     });
   }
-
-  // ---- hosting ----
 
   async host({ isPublic = false, code = null }: { isPublic?: boolean; code?: string | null } = {}) {
     this.leave();
@@ -271,7 +236,6 @@ export class Net {
             try {
               conn.close();
             } catch {
-              /* already gone */
             }
           }, 400);
           return;
@@ -285,8 +249,6 @@ export class Net {
     this.keepAlive(this.peer);
     return this.code as string;
   }
-
-  // ---- joining ----
 
   async join(code: string, meta: PeerMeta = {}) {
     this.leave();
@@ -303,7 +265,6 @@ export class Net {
     return c;
   }
 
-  /** Knock on every public slot at once and take the first host that answers. */
   async quickJoin(meta: PeerMeta = {}) {
     this.leave();
     this.isHost = false;
@@ -328,7 +289,6 @@ export class Net {
             try {
               a.conn.close();
             } catch {
-              /* never opened */
             }
           }
         }
@@ -400,7 +360,6 @@ export class Net {
           try {
             conn.close();
           } catch {
-            /* never opened */
           }
           reject(err);
         } else resolve(val!);
@@ -432,13 +391,11 @@ export class Net {
   }
 
   leave() {
-    // closing our own connections must not look like everyone else leaving
     this.leaving = true;
     for (const c of this.conns.values()) {
       try {
         c.close();
       } catch {
-        /* already closed */
       }
     }
     this.conns.clear();
@@ -446,7 +403,6 @@ export class Net {
       try {
         this.peer.destroy();
       } catch {
-        /* already destroyed */
       }
     }
     this.peer = null;
@@ -458,9 +414,6 @@ export class Net {
     this.leaving = false;
   }
 
-  // ---- messaging ----
-
-  /** host: to everyone. client: to the host, and on to everyone if relay is set. */
   send(type: string, data?: unknown, relay = false) {
     if (this.isHost) {
       const m: NetMessage = { t: type, d: data, from: this.id! };

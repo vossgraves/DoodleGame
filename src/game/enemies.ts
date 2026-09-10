@@ -5,8 +5,13 @@ import { rand, randInt, clamp, damp, wrapAngle, choose, TAU } from "./math";
 import type { Mode } from "./level";
 import type { Player, WeaponKind } from "./player";
 import type { AudioSys } from "./audio";
-// type-only, so this does not create a runtime cycle with remote.ts
 import type { NetTarget } from "./remote";
+
+const _to = new THREE.Vector3();
+const _flat = new THREE.Vector3();
+const _look = new THREE.Vector3();
+const _pv = new THREE.Vector3();
+const _pd = new THREE.Vector3();
 
 export type EnemyKind =
   | "grunt"
@@ -198,15 +203,11 @@ export interface Pickup {
   mesh: THREE.Group;
   t: number;
   alive: boolean;
-  /** shared id so every client removes the same drop when someone takes it */
   id: number;
-  /** seconds before it fades; Infinity for map loot that should stay put */
   life: number;
-  /** for "gun" drops: which weapon the fallen player was carrying */
   weapon?: WeaponKind;
 }
 
-/** How many expiring drops may lie about at once before the oldest is cleared. */
 const MAX_TIMED_DROPS = 10;
 
 export class Enemy {
@@ -230,6 +231,12 @@ export class Enemy {
   onGround = true;
   radius: number;
   height: number;
+  seeT = rand(0, 0.2);
+  canSee = false;
+  wallT = rand(0, 0.15);
+  wallBlocked = false;
+  private _center = new THREE.Vector3();
+  private _head = new THREE.Vector3();
 
   constructor(kind: EnemyKind, pos: THREE.Vector3) {
     this.def = TYPES[kind];
@@ -244,10 +251,10 @@ export class Enemy {
   }
 
   get center() {
-    return new THREE.Vector3(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
+    return this._center.set(this.pos.x, this.pos.y + this.height * 0.55, this.pos.z);
   }
   get headPos() {
-    return new THREE.Vector3(this.pos.x, this.pos.y + this.height * 0.92, this.pos.z);
+    return this._head.set(this.pos.x, this.pos.y + this.height * 0.92, this.pos.z);
   }
 
   takeDamage(amount: number, from: THREE.Vector3, knock: number) {
@@ -282,16 +289,19 @@ export class Combat {
   enemies: Enemy[] = [];
   projectiles: Projectile[] = [];
   pickups: Pickup[] = [];
-  /** other players, shot through the same path as bots */
   remotes: NetTarget[] = [];
   onRemoteHit: ((t: NetTarget, dmg: number, crit: boolean, point: THREE.Vector3) => void) | null = null;
-  /** a blade landed from behind at contact range */
   onRemoteExecute: ((t: NetTarget) => void) | null = null;
   private projGeo = new THREE.SphereGeometry(0.07, 6, 5);
   private projMat = makeInkMaterial({ ink: INK.RED, fill: true });
   private spitMat = makeInkMaterial({ ink: INK.GREEN, fill: true });
   private nadeMat = makeInkMaterial({ ink: INK.BLACK });
   private tracerMat = makeInkMaterial({ ink: INK.ORANGE, fill: true });
+  private tracerGeo = (() => {
+    const g = new THREE.CylinderGeometry(0.02, 0.012, 1, 4);
+    g.rotateX(Math.PI / 2);
+    return g;
+  })();
   tracers: { mesh: THREE.Mesh; life: number }[] = [];
   particles: { mesh: THREE.Mesh; vel: THREE.Vector3; life: number }[] = [];
   private pGeo = new THREE.BoxGeometry(0.07, 0.07, 0.28);
@@ -322,8 +332,6 @@ export class Combat {
     return e;
   }
 
-  /** Colour of the spark when you land a hit, and of the shot trail. Both are
-      player settings, so they are uniforms rather than baked into a material. */
   hitInk: number = INK.RED;
   private _tracerInk: number = INK.ORANGE;
   get tracerInk() {
@@ -344,11 +352,9 @@ export class Combat {
     return m;
   }
 
-  /** particle budget multiplier, driven by the graphics setting */
   fx = 1;
 
   burst(pos: THREE.Vector3, ink: number, n = 10, speed = 6) {
-    // cached: this used to build a fresh shader on every single hit
     const mat = this.burstMat(ink);
     const count = Math.max(1, Math.round(n * this.fx));
     for (let i = 0; i < count; i++) {
@@ -365,17 +371,15 @@ export class Combat {
 
   tracer(from: THREE.Vector3, to: THREE.Vector3, ink?: number) {
     const dist = from.distanceTo(to);
-    const g = new THREE.CylinderGeometry(0.02, 0.012, dist, 4);
-    g.rotateX(Math.PI / 2);
-    const m = new THREE.Mesh(g, ink === undefined ? this.tracerMat : this.burstMat(ink));
+    const m = new THREE.Mesh(this.tracerGeo, ink === undefined ? this.tracerMat : this.burstMat(ink));
     m.position.copy(from).lerp(to, 0.5);
     m.lookAt(to);
+    m.scale.set(1, 1, dist);
     this.scene.add(m);
     this.tracers.push({ mesh: m, life: 0.07 });
   }
 
   private nextPickupId = 1;
-  /** someone took a drop; the caller tells the other clients so it vanishes there too */
   onPickupTaken: ((id: number) => void) | null = null;
 
   spawnPickup(
@@ -384,14 +388,12 @@ export class Combat {
     opts: { id?: number; weapon?: WeaponKind; life?: number } = {},
   ) {
     const id = opts.id ?? this.nextPickupId++;
-    // keep local ids ahead of anything the host has handed out
     if (opts.id !== undefined && opts.id >= this.nextPickupId) this.nextPickupId = opts.id + 1;
     if (this.pickups.some((p) => p.alive && p.id === id)) return;
 
     const g = new THREE.Group();
     const ink = kind === "hp" ? INK.RED : kind === "nade" ? INK.GREEN : INK.ORANGE;
     if (kind === "gun") {
-      // a little dropped rifle rather than a crate, so it reads at a glance
       const mat = makeInkMaterial({ ink: INK.BLACK, fill: true });
       const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.13, 0.1), mat);
       g.add(body);
@@ -429,17 +431,17 @@ export class Combat {
       life: opts.life ?? Infinity,
     });
 
-    // A busy free-for-all drops two of these per death, so a timer alone still
-    // ends up carpeting the map. Oldest goes first, and only ever the ones that
-    // were always going to expire — battle royale's ground loot is the map.
     if (opts.life !== undefined) {
       const timed = this.pickups.filter((p) => p.alive && p.life !== Infinity);
       for (let i = 0; i < timed.length - MAX_TIMED_DROPS; i++) this.killPickup(timed[i]);
     }
   }
 
+  private pickupsDirty = false;
+
   private killPickup(p: Pickup) {
     p.alive = false;
+    this.pickupsDirty = true;
     this.scene.remove(p.mesh);
     p.mesh.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -447,7 +449,6 @@ export class Combat {
     });
   }
 
-  /** Remove a drop someone else claimed first. */
   removePickup(id: number) {
     for (const p of this.pickups) {
       if (p.id === id && p.alive) this.killPickup(p);
@@ -508,7 +509,6 @@ export class Combat {
         if (killed) this.onEnemyKilled(e, player);
       }
     }
-    // blasts have to reach people too, or grenades and streaks are PvE-only
     for (const r of this.remotes) {
       if (!r.alive) continue;
       const d = r.center.distanceTo(pos);
@@ -539,7 +539,6 @@ export class Combat {
   ): { hit: boolean; kill: boolean; crit: boolean; point: THREE.Vector3; enemy?: Enemy; remote?: NetTarget } {
     const trace = this.world.penTrace(origin, dir, maxDist);
     let bestDist = trace.dist;
-    // anything past the punched-through surface only gets what is left of the round
     const penMul = (t: number) => (trace.penAt !== null && t > trace.penAt ? PEN_DAMAGE : 1);
     let best: { e: Enemy; part: "head" | "body"; t: number } | null = null;
     for (const e of this.enemies) {
@@ -555,8 +554,6 @@ export class Combat {
         best = { e, part: "body", t: bt };
       }
     }
-    // players are tested against the same running bestDist, so whoever is in
-    // front wins regardless of whether they are a bot or a person
     let bestR: { r: NetTarget; part: "head" | "body"; t: number } | null = null;
     for (const r of this.remotes) {
       if (!r.alive) continue;
@@ -629,7 +626,6 @@ export class Combat {
       }
       if (headish) crit = true;
     }
-    // the blade has to reach other players too, or it is dead weight in PvP
     for (const r of this.remotes) {
       if (!r.alive) continue;
       const to = new THREE.Vector3().subVectors(r.center, origin);
@@ -638,7 +634,6 @@ export class Combat {
       const toDir = to.clone().normalize();
       if (dist > 0.2 && toDir.dot(dir) < cosH) continue;
       if (!this.world.hasLineOfSight(origin, r.center)) continue;
-      // caught them looking the other way, at contact range: that is a finisher
       const fromBehind = dist < 2.4 && r.forward && toDir.dot(r.forward) > 0.45;
       this.burst(r.center, this.hitInk, fromBehind ? 16 : 8, fromBehind ? 11 : 8);
       if (fromBehind) {
@@ -674,7 +669,6 @@ export class Combat {
       this.think(e, dt, player, time);
     }
 
-    // prune dead after a bit
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i];
       if (!e.alive) {
@@ -692,7 +686,10 @@ export class Combat {
       if (!p.fromEnemy) p.vel.y -= 18 * dt;
       p.pos.addScaledVector(p.vel, dt);
       p.mesh.position.copy(p.pos);
-      const hitW = this.world.raycast(p.pos.clone().addScaledVector(p.vel, -dt), p.vel.clone().normalize(), p.vel.length() * dt + 0.1);
+      const sp = p.vel.length();
+      _pv.copy(p.pos).addScaledVector(p.vel, -dt);
+      _pd.copy(p.vel).divideScalar(sp || 1);
+      const hitW = this.world.raycast(_pv, _pd, sp * dt + 0.1);
       let boom = p.life <= 0;
       if (hitW) {
         p.pos.copy(hitW.point);
@@ -720,7 +717,6 @@ export class Combat {
     for (const pk of this.pickups) {
       if (!pk.alive) continue;
       pk.t += dt;
-      // battlefield drops fade out, or a long match buries the map in loot
       if (pk.life !== Infinity) {
         pk.life -= dt;
         if (pk.life <= 0) {
@@ -731,12 +727,11 @@ export class Combat {
       }
       pk.mesh.position.y = pk.pos.y + 0.45 + Math.sin(pk.t * 3) * 0.12;
       pk.mesh.rotation.y += dt * 1.8;
-      // walk over it and it is yours — no pickup button on a phone
       if (player.alive && player.pos.distanceTo(pk.pos) < 1.4) {
         if (pk.kind === "gun" && pk.weapon) {
           if (!player.pickUpWeapon(pk.weapon)) continue;
         } else if (pk.kind === "hp") {
-          if (player.hp >= player.maxHp) continue; // leave it for someone who needs it
+          if (player.hp >= player.maxHp) continue;
           player.addHp(40);
         } else if (pk.kind === "nade") {
           player.grenades = Math.min(5, player.grenades + 1);
@@ -748,14 +743,16 @@ export class Combat {
         this.onPickupTaken?.(pk.id);
       }
     }
-    this.pickups = this.pickups.filter((p) => p.alive);
+    if (this.pickupsDirty) {
+      this.pickups = this.pickups.filter((p) => p.alive);
+      this.pickupsDirty = false;
+    }
 
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const t = this.tracers[i];
       t.life -= dt;
       if (t.life <= 0) {
         this.scene.remove(t.mesh);
-        t.mesh.geometry.dispose();
         this.tracers.splice(i, 1);
       }
     }
@@ -774,9 +771,9 @@ export class Combat {
 
   private think(e: Enemy, dt: number, player: Player, time: number) {
     const target = player.center;
-    const to = new THREE.Vector3().subVectors(target, e.center);
+    const to = _to.subVectors(target, e.center);
     const dist = to.length();
-    const flat = to.clone();
+    const flat = _flat.copy(to);
     flat.y = 0;
     const fd = flat.length() || 1;
     const nx = flat.x / fd,
@@ -788,7 +785,15 @@ export class Combat {
     e.hitFlash = Math.max(0, e.hitFlash - dt);
     e.walk += dt * (e.def.speed / 2.4);
 
-    const see = dist < 70 && this.world.hasLineOfSight(e.headPos, player.eye);
+    const ranged = !e.def.melee && !e.def.explode;
+    if (ranged) {
+      e.seeT -= dt;
+      if (e.seeT <= 0) {
+        e.seeT = 0.2;
+        e.canSee = dist < 70 && this.world.hasLineOfSight(e.headPos, player.eye);
+      }
+    }
+    const see = ranged && e.canSee;
     let mx = 0,
       mz = 0;
     if (e.def.explode) {
@@ -822,7 +827,6 @@ export class Combat {
         this.fireEnemyShot(e, player.eye, 22, e.def.dmg, true);
       }
     } else {
-      // gunner
       const stop = e.def.kind === "sniper" ? 40 : e.def.kind === "heavy" ? 9 : 14;
       if (dist > stop) {
         mx = nx;
@@ -845,12 +849,16 @@ export class Combat {
       }
     }
 
-    // simple wall avoid
     if (mx !== 0 || mz !== 0) {
-      const look = e.headPos.clone();
-      look.x += nx * 1.4;
-      look.z += nz * 1.4;
-      if (!this.world.hasLineOfSight(e.headPos, look)) {
+      e.wallT -= dt;
+      if (e.wallT <= 0) {
+        e.wallT = 0.15;
+        _look.copy(e.headPos);
+        _look.x += nx * 1.4;
+        _look.z += nz * 1.4;
+        e.wallBlocked = !this.world.hasLineOfSight(e.headPos, _look);
+      }
+      if (e.wallBlocked) {
         mx += -nz * 0.8;
         mz += nx * 0.8;
       }
@@ -883,7 +891,9 @@ export class Combat {
   }
 
   aliveCount() {
-    return this.enemies.filter((e) => e.alive).length;
+    let n = 0;
+    for (const e of this.enemies) if (e.alive) n += 1;
+    return n;
   }
 
   rayHitscan = this.hitscan.bind(this);
@@ -895,7 +905,7 @@ function lerp(a: number, b: number, t: number) {
 
 export function wavePlan(mode: Mode, wave: number): EnemyKind[] {
   const list: EnemyKind[] = [];
-  if (mode === "arena") return list; // players only
+  if (mode === "arena") return list;
 
   if (mode === "district") {
     const n = 4 + wave * 2;

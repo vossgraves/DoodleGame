@@ -1,13 +1,5 @@
 import type { WeaponDef, WeaponKind } from "./player";
 
-/**
- * The gunsmith. Every gun has four bolt-on slots, and each attachment is a pure
- * set of multipliers over the base weapon definition — no attachment carries
- * behaviour of its own. That keeps the whole system declarative: the loadout UI
- * reads the same numbers the game does, so the pros and cons it draws are the
- * pros and cons you actually get.
- */
-
 export type SlotId = "sight" | "muzzle" | "mag" | "stock";
 
 export const SLOTS: { id: SlotId; name: string; blurb: string }[] = [
@@ -17,11 +9,6 @@ export const SLOTS: { id: SlotId; name: string; blurb: string }[] = [
   { id: "stock", name: "STOCK", blurb: "how it sits in your hands" },
 ];
 
-/**
- * Multipliers on the base def. Everything is a ratio around 1 so attachments
- * stack predictably; `quiet` is the one flag, because a suppressor is a
- * behaviour change rather than a number.
- */
 export interface StatMods {
   damage?: number;
   magSize?: number;
@@ -33,11 +20,9 @@ export interface StatMods {
   spreadKick?: number;
   spreadMax?: number;
   camKick?: number;
-  /** multiplies the aimed field of view — under 1 means more zoom */
   adsFov?: number;
   adsSpeed?: number;
   moveMul?: number;
-  /** multiplies both damage-falloff distances */
   falloff?: number;
   quiet?: boolean;
 }
@@ -50,7 +35,6 @@ export interface Attachment {
   mods: StatMods;
 }
 
-/** How each stat reads to a player, and which direction is an upgrade. */
 const STAT_LABELS: Record<keyof StatMods, { label: string; higherIsBetter: boolean }> = {
   damage: { label: "damage", higherIsBetter: true },
   magSize: { label: "mag size", higherIsBetter: true },
@@ -70,7 +54,6 @@ const STAT_LABELS: Record<keyof StatMods, { label: string; higherIsBetter: boole
 };
 
 export const ATTACHMENTS: Attachment[] = [
-  // ---- optics -------------------------------------------------------------
   {
     id: "reddot",
     slot: "sight",
@@ -100,7 +83,6 @@ export const ATTACHMENTS: Attachment[] = [
     mods: { adsSpeed: 1.3, adsFov: 1.1, adsSpread: 1.15 },
   },
 
-  // ---- muzzles ------------------------------------------------------------
   {
     id: "suppressor",
     slot: "muzzle",
@@ -130,7 +112,6 @@ export const ATTACHMENTS: Attachment[] = [
     mods: { falloff: 1.32, damage: 1.06, adsSpeed: 0.85, moveMul: 0.97 },
   },
 
-  // ---- magazines ----------------------------------------------------------
   {
     id: "extmag",
     slot: "mag",
@@ -160,7 +141,6 @@ export const ATTACHMENTS: Attachment[] = [
     mods: { adsSpeed: 1.12, moveMul: 1.04, maxReserve: 0.85 },
   },
 
-  // ---- stocks -------------------------------------------------------------
   {
     id: "tacstock",
     slot: "stock",
@@ -190,12 +170,9 @@ export function attachmentsFor(slot: SlotId) {
   return ATTACHMENTS.filter((a) => a.slot === slot);
 }
 
-/** One gun's build. A missing slot means the gun is bare there. */
 export type GunBuild = Partial<Record<SlotId, string>>;
-/** Every gun's build, keyed by weapon kind. */
 export type Gunsmith = Partial<Record<WeaponKind, GunBuild>>;
 
-/** Drop ids that no longer exist and attachments filed under the wrong slot. */
 export function sanitizeGunsmith(raw: unknown): Gunsmith {
   const out: Gunsmith = {};
   if (!raw || typeof raw !== "object") return out;
@@ -220,7 +197,6 @@ export function buildAttachments(build: GunBuild | undefined): Attachment[] {
   );
 }
 
-/** Fold a build's multipliers into a copy of the base definition. */
 export function applyBuild(base: WeaponDef, build: GunBuild | undefined): WeaponDef {
   const list = buildAttachments(build);
   if (!list.length) return { ...base };
@@ -243,13 +219,11 @@ export function applyBuild(base: WeaponDef, build: GunBuild | undefined): Weapon
     if (m.falloff && d.falloff) d.falloff = [d.falloff[0] * m.falloff, d.falloff[1] * m.falloff, d.falloff[2]];
     if (m.quiet) d.quiet = true;
   }
-  // spread can never end up wider than the cap it climbs to
   d.spreadMax = Math.max(d.spreadMax, d.spread * 1.05);
   d.reserve = Math.min(d.reserve, d.maxReserve);
   return d;
 }
 
-/** Human-readable deltas, for the gunsmith screen. */
 export function modLines(a: Attachment): { text: string; good: boolean }[] {
   const out: { text: string; good: boolean }[] = [];
   for (const [key, val] of Object.entries(a.mods) as [keyof StatMods, number | boolean][]) {

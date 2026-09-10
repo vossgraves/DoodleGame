@@ -12,14 +12,8 @@ const INK_COLORS = [
   new THREE.Vector3(0.9, 0.4, 0.66),
 ];
 
-/**
- * A map's own stationery: the paper it is drawn on, whether that paper is ruled
- * or gridded, and which six pens were used. A jungle has no business being drawn
- * in the same school-exercise-book blue as a street.
- */
 export interface PaperStyle {
   paper: [number, number, number];
-  /** 0 ruled with a margin, 1 graph paper */
   grid?: 0 | 1;
   inks?: [number, number, number][];
 }
@@ -32,7 +26,7 @@ const shared = {
   uTime: { value: 0 },
 };
 
-const inkVert = /* glsl */ `
+const inkVert = `
 varying vec3 vNormalV;
 uniform float uTime;
 void main() {
@@ -44,10 +38,9 @@ void main() {
 }
 `;
 
-/** Ink ids ride in one 8-bit channel, so they are stored as a fraction of this. */
 const INK_SLOTS = 8;
 
-const inkFrag = /* glsl */ `
+const inkFrag = `
 precision highp float;
 #define INK_SCALE ${(1 / INK_SLOTS).toFixed(6)}
 uniform float uInk;
@@ -86,7 +79,7 @@ export function makeInkMaterial(
   });
 }
 
-const postVert = /* glsl */ `
+const postVert = `
 varying vec2 vUv;
 void main() {
   vUv = uv;
@@ -94,7 +87,7 @@ void main() {
 }
 `;
 
-const postFrag = /* glsl */ `
+const postFrag = `
 precision highp float;
 #define INK_SLOTS ${INK_SLOTS}.0
 varying vec2 vUv;
@@ -300,12 +293,6 @@ void main() {
 
 export type Quality = "low" | "medium" | "high" | "ultra";
 
-/**
- * `pr` caps the pixel ratio, which decides both how crisp the ink lines are and
- * how much of the phone's battery the post pass eats — it is by far the biggest
- * lever here, since the pass costs ten texture fetches per pixel. `fx` scales
- * particle counts, and `cheap` compiles the pass without its noise lookups.
- */
 export const QUALITY: Record<Quality, { pr: number; fx: number; cheap: boolean }> = {
   low: { pr: 0.85, fx: 0.3, cheap: true },
   medium: { pr: 1.2, fx: 0.65, cheap: true },
@@ -313,18 +300,14 @@ export const QUALITY: Record<Quality, { pr: number; fx: number; cheap: boolean }
   ultra: { pr: 2.5, fx: 1.4, cheap: false },
 };
 
-/** Below about this many device pixels per CSS pixel the ink lines turn to mush. */
 const MIN_PR = 0.72;
 
 export const isQuality = (v: unknown): v is Quality => typeof v === "string" && v in QUALITY;
 
-/** A phone that draws at three device pixels per CSS pixel cooks itself for nothing. */
 export function defaultQuality(): Quality {
   if (typeof navigator === "undefined") return "high";
   const touch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
   if (!touch) return "high";
-  // start somewhere reasonable and let the adaptive scaler shed what the phone
-  // cannot actually sustain, rather than guessing low and looking soft forever
   const cores = navigator.hardwareConcurrency || 4;
   return cores >= 4 ? "medium" : "low";
 }
@@ -340,19 +323,11 @@ export class InkRenderer {
   private _hurt = 0;
   private _flash = 0;
   night = 0;
-  /** 0..1, eased so the tubes fade up rather than snapping on */
   nvg = 0;
   quality: Quality = "high";
   private lastW = 1;
   private lastH = 1;
-  /**
-   * Adaptive resolution. A fixed pixel ratio either wastes a fast phone or melts
-   * a slow one, and nobody reads a settings screen before their hands get hot —
-   * so the render target follows the frame time instead. Only the 3D pass
-   * shrinks; the HUD is DOM and stays sharp.
-   */
   private resScale = 1;
-  /** the highest scale that has not already proved too slow */
   private ceiling = 1;
   private budget = 1 / 60;
   private acc = 0;
@@ -419,7 +394,6 @@ export class InkRenderer {
     this.postScene.add(quad);
   }
 
-  /** Change quality without rebuilding the renderer. */
   setQuality(q: Quality) {
     if (!isQuality(q) || q === this.quality) return;
     this.quality = q;
@@ -431,7 +405,6 @@ export class InkRenderer {
     this.resize(this.lastW, this.lastH);
   }
 
-  /** Hand the pass a map's stationery; nothing given restores the district's. */
   setStyle(s: PaperStyle | null) {
     const st = s ?? DEFAULT_STYLE;
     this.postMat.uniforms.uPaper.value.fromArray(st.paper);
@@ -439,22 +412,10 @@ export class InkRenderer {
     for (let i = 0; i < INK_COLORS.length; i++) INK_COLORS[i].fromArray(st.inks?.[i] ?? DEFAULT_INKS[i]);
   }
 
-  /** The frame time to aim at, in seconds. 0 means "whatever 60fps is". */
   setBudget(fps: number) {
     this.budget = 1 / (fps > 0 ? fps : 60);
   }
 
-  /**
-   * Feed one frame's time in. Sustained overruns shed render resolution and
-   * sustained headroom takes it back.
-   *
-   * Every adjustment costs a visible white frame — assigning canvas.width clears
-   * the backing store, and the paper page shows through until the next draw — so
-   * this is built to converge and then stop: a long sample window, a cooldown
-   * between decisions, and a ceiling that never lets it climb back to a scale it
-   * has already failed at. Without the ceiling a phone sitting between two steps
-   * would flash forever.
-   */
   pace(dt: number) {
     this.acc += dt;
     this.accN += 1;
@@ -467,36 +428,26 @@ export class InkRenderer {
     const before = this.resScale;
     const floor = Math.min(1, MIN_PR / Math.min(window.devicePixelRatio, QUALITY[this.quality].pr));
     if (mean > this.budget * 1.22) {
-      // Correct in proportion to how far over we are rather than one notch at a
-      // time: fill rate goes as the square of the scale, so this lands close in
-      // a single step and spends one white frame instead of six.
       const over = mean / this.budget;
       this.resScale = Math.max(floor, this.resScale * Math.max(0.5, Math.min(0.92, 1 / Math.sqrt(over))));
       this.ceiling = this.resScale;
     } else if (mean <= this.budget * 1.05) {
-      // Meeting the target is itself the evidence of headroom: under a frame cap
-      // the clock can never read faster than the cap, so a "well under budget"
-      // test would only ever shed resolution and never take it back.
       this.resScale = Math.min(this.ceiling, this.resScale + 0.05);
     }
     if (this.resScale === before) return;
     this.sinceChange = 0;
     this.resize(this.lastW, this.lastH);
-    // draw straight back into the buffer the resize just blanked
     this.render(this.lastTime);
   }
 
   resize(w: number, h: number) {
     this.lastW = w;
     this.lastH = h;
-    // the whole pipeline shrinks, post pass included — that pass is the expensive
-    // half, so scaling only the scene target would save almost nothing
     const pr = Math.min(window.devicePixelRatio, QUALITY[this.quality].pr) * this.resScale;
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     const rw = Math.max(2, Math.floor(w * pr));
     const rh = Math.max(2, Math.floor(h * pr));
-    // assigning the same size still blanks the canvas, so do not
     if (this.renderer.domElement.width === rw && this.renderer.domElement.height === rh) return;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
@@ -524,7 +475,6 @@ export class InkRenderer {
     this.postMat.uniforms.uNvg.value = this.nvg;
     this.postMat.uniforms.uNear.value = this.camera.near;
     this.postMat.uniforms.uFar.value = this.camera.far;
-    // the hatch pass rebuilds world position from depth, so it needs both inverses
     this.camera.updateMatrixWorld();
     this.postMat.uniforms.uInvProj.value.copy(this.camera.projectionMatrixInverse);
     this.postMat.uniforms.uInvView.value.copy(this.camera.matrixWorld);
