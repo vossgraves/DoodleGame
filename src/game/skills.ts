@@ -120,12 +120,19 @@ export class Skills {
   private flames: THREE.Points | null = null;
   private flameGeo: THREE.BufferGeometry | null = null;
   private boltT = 0;
+  private boltGeo = new THREE.ConeGeometry(0.07, 0.5, 5).rotateX(Math.PI / 2);
+  private boltMat = makeInkMaterial({ ink: INK.ORANGE, fill: true });
+  private boltPool: Bolt[] = [];
   bolts: Bolt[] = [];
   private decoys: DecoyUnit[] = [];
   private decoyId = 0;
 
   constructor(hooks: SkillHooks) {
     this.hooks = hooks;
+    // A bolt lives four seconds and shots are at least BOLT_GAP apart.
+    for (let i = 0; i < Math.ceil(4 / BOLT_GAP) + 1; i++) {
+      this.boltPool.push({ mesh: new THREE.Mesh(this.boltGeo, this.boltMat), vel: new THREE.Vector3(), life: 0 });
+    }
   }
 
   setKind(k: SkillKind) {
@@ -152,7 +159,7 @@ export class Skills {
     return this.active && this.kind === "poltergeist";
   }
   liveDecoys(): Decoy[] {
-    return this.decoys.filter((d) => d.alive);
+    return this.decoys;
   }
 
   use() {
@@ -216,7 +223,7 @@ export class Skills {
     this.flameTick -= dt;
     if (this.flameTick > 0) return;
     this.flameTick = FLAME_TICK;
-    const to = new THREE.Vector3();
+    const to = _to;
     for (const t of this.hooks.hostiles()) {
       if (!t.alive) continue;
       to.subVectors(t.center, eye);
@@ -235,15 +242,14 @@ export class Skills {
     this.boltT = BOLT_GAP;
     const eye = this.hooks.eye();
     const fwd = this.hooks.forward();
-    const mesh = new THREE.Mesh(
-      new THREE.ConeGeometry(0.07, 0.5, 5),
-      makeInkMaterial({ ink: INK.ORANGE, fill: true }),
-    );
-    mesh.geometry.rotateX(Math.PI / 2);
-    mesh.position.copy(eye).addScaledVector(fwd, 0.7);
-    mesh.quaternion.setFromUnitVectors(FWD, fwd);
-    this.hooks.scene.add(mesh);
-    this.bolts.push({ mesh, vel: fwd.clone().multiplyScalar(BOLT_SPEED), life: 4 });
+    const bolt = this.boltPool.pop();
+    if (!bolt) return;
+    bolt.mesh.position.copy(eye).addScaledVector(fwd, 0.7);
+    bolt.mesh.quaternion.setFromUnitVectors(FWD, fwd);
+    bolt.vel.copy(fwd).multiplyScalar(BOLT_SPEED);
+    bolt.life = 4;
+    this.hooks.scene.add(bolt.mesh);
+    this.bolts.push(bolt);
   }
 
   private flyBolts(dt: number) {
@@ -260,17 +266,17 @@ export class Skills {
       else {
         for (const t of this.hooks.hostiles()) {
           if (t.alive && t.center.distanceTo(b.mesh.position) < 1.2) {
-            burst = t.center.clone();
+            burst = t.center;
             break;
           }
         }
       }
       if (burst || b.life <= 0) {
-        this.hooks.boom(burst ?? b.mesh.position.clone(), BOLT_RADIUS, BOLT_DAMAGE);
+        this.hooks.boom(_burst.copy(burst ?? b.mesh.position), BOLT_RADIUS, BOLT_DAMAGE);
         this.hooks.scene.remove(b.mesh);
-        b.mesh.geometry.dispose();
-        (b.mesh.material as THREE.Material).dispose();
-        this.bolts.splice(i, 1);
+        this.boltPool.push(b);
+        this.bolts[i] = this.bolts[this.bolts.length - 1];
+        this.bolts.pop();
         continue;
       }
       b.mesh.position.add(step);
@@ -367,12 +373,11 @@ export class Skills {
 
   dispose() {
     this.clearActive();
-    for (const b of this.bolts) {
-      this.hooks.scene.remove(b.mesh);
-      b.mesh.geometry.dispose();
-      (b.mesh.material as THREE.Material).dispose();
-    }
+    for (const b of this.bolts) this.hooks.scene.remove(b.mesh);
     this.bolts.length = 0;
+    this.boltPool.length = 0;
+    this.boltGeo.dispose();
+    this.boltMat.dispose();
   }
 }
 
@@ -380,3 +385,5 @@ const FWD = new THREE.Vector3(0, 0, 1);
 const _step = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _eye = new THREE.Vector3();
+const _to = new THREE.Vector3();
+const _burst = new THREE.Vector3();

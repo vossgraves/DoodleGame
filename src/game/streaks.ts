@@ -209,7 +209,7 @@ export class Streaks {
     if (!best) return;
     this.droneFireT = DRONE_INTERVAL;
     this.drone.lookAt(best.center);
-    this.hooks.tracer(this.dronePos.clone(), best.center.clone());
+    this.hooks.tracer(this.dronePos, best.center);
     best.hit(DRONE_DAMAGE, false);
   }
 
@@ -276,9 +276,8 @@ export class Streaks {
       }
     }
     if (touched || this.missileT <= 0) {
-      const at = this.missilePos.clone();
       this.clearMissile();
-      this.hooks.boom(at, 11, 190);
+      this.hooks.boom(this.missilePos, 11, 190);
     }
   }
 
@@ -305,7 +304,10 @@ export class Streaks {
 
   private clearSwarm() {
     for (const s of this.swarm) this.hooks.scene.remove(s.mesh);
-    if (this.swarm.length) this.swarm[0].mesh.geometry.dispose();
+    if (this.swarm.length) {
+      this.swarm[0].mesh.geometry.dispose();
+      (this.swarm[0].mesh.material as THREE.Material).dispose();
+    }
     this.swarm.length = 0;
   }
 
@@ -339,7 +341,7 @@ export class Streaks {
         if (dist < 0.9) {
           s.alive = false;
           this.hooks.scene.remove(s.mesh);
-          this.hooks.boom(s.mesh.position.clone(), 2.6, SWARM_DAMAGE);
+          this.hooks.boom(s.mesh.position, 2.6, SWARM_DAMAGE);
           continue;
         }
         to.divideScalar(dist || 1);
@@ -353,7 +355,7 @@ export class Streaks {
       s.mesh.rotation.y += dt * 9;
     }
 
-    this.swarm = this.swarm.filter((s) => s.alive);
+    // Keep spent units until cleanup so the shared GPU resources remain owned.
     if (expired) this.clearSwarm();
   }
 

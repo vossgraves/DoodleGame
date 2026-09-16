@@ -486,8 +486,11 @@ export class InkRenderer {
   }
 
   dispose() {
+    this.postScene.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.geometry.dispose();
+    });
+    this.postMat.dispose();
     this.rt.dispose();
-    this.rt.depthTexture?.dispose();
     this.renderer.dispose();
   }
 }

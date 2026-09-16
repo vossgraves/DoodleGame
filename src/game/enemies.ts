@@ -235,6 +235,10 @@ export class Enemy {
   canSee = false;
   wallT = rand(0, 0.15);
   wallBlocked = false;
+  seenFrom = new THREE.Vector3();
+  seenTarget = new THREE.Vector3();
+  wallFrom = new THREE.Vector3();
+  wallLook = new THREE.Vector3();
   private _center = new THREE.Vector3();
   private _head = new THREE.Vector3();
 
@@ -786,14 +790,28 @@ export class Combat {
     e.walk += dt * (e.def.speed / 2.4);
 
     const ranged = !e.def.melee && !e.def.explode;
-    if (ranged) {
+    if (!player.alive) {
+      e.canSee = false;
+      e.seeT = 0;
+      e.burstLeft = 0;
+      e.wallT = 0;
+      e.wallBlocked = false;
+    } else if (ranged) {
       e.seeT -= dt;
+      if (e.headPos.distanceToSquared(e.seenFrom) > 9 || player.eye.distanceToSquared(e.seenTarget) > 9) e.seeT = 0;
       if (e.seeT <= 0) {
         e.seeT = 0.2;
+        e.seenFrom.copy(e.headPos);
+        e.seenTarget.copy(player.eye);
         e.canSee = dist < 70 && this.world.hasLineOfSight(e.headPos, player.eye);
       }
     }
-    const see = ranged && e.canSee;
+    // Bursts can outlive the awareness sample; validate only when a shot is due.
+    if (ranged && player.alive && e.attackCd <= 0 && ((e.canSee && dist < e.def.range) || e.burstLeft > 0)) {
+      e.canSee = dist < 70 && this.world.hasLineOfSight(e.headPos, player.eye);
+      if (!e.canSee) e.burstLeft = 0;
+    }
+    const see = ranged && e.canSee && player.alive;
     let mx = 0,
       mz = 0;
     if (e.def.explode) {
@@ -851,11 +869,14 @@ export class Combat {
 
     if (mx !== 0 || mz !== 0) {
       e.wallT -= dt;
+      _look.copy(e.headPos);
+      _look.x += nx * 1.4;
+      _look.z += nz * 1.4;
+      if (e.headPos.distanceToSquared(e.wallFrom) > 9 || _look.distanceToSquared(e.wallLook) > 1) e.wallT = 0;
       if (e.wallT <= 0) {
         e.wallT = 0.15;
-        _look.copy(e.headPos);
-        _look.x += nx * 1.4;
-        _look.z += nz * 1.4;
+        e.wallFrom.copy(e.headPos);
+        e.wallLook.copy(_look);
         e.wallBlocked = !this.world.hasLineOfSight(e.headPos, _look);
       }
       if (e.wallBlocked) {

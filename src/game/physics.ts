@@ -50,8 +50,9 @@ export class World {
     if (!this.gridDirty) return;
     this.grid.clear();
     for (const b of this.boxes) {
-      const x0 = Math.floor(b.minx / CELL), x1 = Math.floor(b.maxx / CELL);
-      const z0 = Math.floor(b.minz / CELL), z1 = Math.floor(b.maxz / CELL);
+      // Slabs include their edges, so a boundary belongs to both adjacent cells.
+      const x0 = Math.ceil(b.minx / CELL) - 1, x1 = Math.floor(b.maxx / CELL);
+      const z0 = Math.ceil(b.minz / CELL) - 1, z1 = Math.floor(b.maxz / CELL);
       for (let gx = x0; gx <= x1; gx++) {
         for (let gz = z0; gz <= z1; gz++) {
           const k = gx + gz * 8192;

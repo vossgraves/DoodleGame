@@ -64,8 +64,8 @@ export function validPeerMessage(m: PeerMsg): boolean {
 }
 
 export class Guard {
-  private logs = new Map<string, number[]>();
-  private strikes = new Map<string, number[]>();
+  private logs = new Map<string, Map<string, number[]>>();
+  private strikes = new Map<string, Map<string, number[]>>();
   private now: () => number;
 
   constructor(now: () => number = () => performance.now()) {
@@ -78,27 +78,33 @@ export class Guard {
   }
 
   forget(pid: string) {
-    for (const map of [this.logs, this.strikes]) {
-      for (const key of [...map.keys()]) if (key.startsWith(pid + "|")) map.delete(key);
-    }
+    this.logs.delete(pid);
+    this.strikes.delete(pid);
+  }
+
+  private log(map: Map<string, Map<string, number[]>>, pid: string, key: string, now: number, window: number) {
+    let peer = map.get(pid);
+    if (!peer) map.set(pid, (peer = new Map()));
+    let log = peer.get(key);
+    if (!log) peer.set(key, (log = []));
+    let write = 0;
+    for (let i = 0; i < log.length; i++) if (now - log[i] < window) log[write++] = log[i];
+    log.length = write;
+    return log;
   }
 
   allow(pid: string, key: string, n: number, limit: number, window: number) {
-    const k = pid + "|" + key;
     const now = this.now();
-    const log = (this.logs.get(k) || []).filter((t) => now - t < window);
+    const log = this.log(this.logs, pid, key, now, window);
     const ok = n <= limit - log.length;
     if (ok) for (let i = 0; i < n; i++) log.push(now);
-    this.logs.set(k, log);
     return ok;
   }
 
   repeated(pid: string, reason: string) {
-    const key = pid + "|" + reason;
     const now = this.now();
-    const log = (this.strikes.get(key) || []).filter((t) => now - t < 30000);
+    const log = this.log(this.strikes, pid, reason, now, 30000);
     if (!log.length || now - log[log.length - 1] >= 6000) log.push(now);
-    this.strikes.set(key, log);
     return log.length >= 3;
   }
 }
@@ -126,7 +132,7 @@ export function gameplayAllowed(
   const d = m.d as Record<string, unknown>;
 
   if (t === "pdmg" || t === "botdmg") {
-    const src = typeof d.gun === "string" && d.gun in HIT_CAP ? (d.gun as string) : "rifle";
+    const src = typeof d.gun === "string" && Object.prototype.hasOwnProperty.call(HIT_CAP, d.gun) ? d.gun : "rifle";
     const [maxHit, perTwoSec] = HIT_CAP[src];
     if ((d.amount as number) > maxHit) {
       violation(from, "impossible damage in one hit");

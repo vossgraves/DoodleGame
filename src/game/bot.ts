@@ -104,6 +104,8 @@ export class Bot implements LocalSnapshotSource {
   private aimErr = new THREE.Vector2();
   private seeT = rand(0, 0.15);
   private canSee = false;
+  private seenFrom = new THREE.Vector3();
+  private seenTarget = new THREE.Vector3();
   private _eye = new THREE.Vector3();
   private _to = new THREE.Vector3();
   private _flat = new THREE.Vector3();
@@ -134,6 +136,12 @@ export class Bot implements LocalSnapshotSource {
     this.headPos.set(this.pos.x, this.pos.y + 1.62, this.pos.z);
   }
 
+  private resetSight() {
+    this.canSee = false;
+    this.seeT = 0;
+    this.seenT = 0;
+  }
+
   private rerollAim() {
     this.aimErr.set(rand(-this.p.error, this.p.error), rand(-this.p.error, this.p.error) * 0.5);
   }
@@ -145,6 +153,8 @@ export class Bot implements LocalSnapshotSource {
     this.alive = true;
     this.deadT = 0;
     this.targetId = null;
+    this.resetSight();
+    this.repickT = 0;
     this.waypoint = null;
     this.lastHitBy = null;
     this.syncBody();
@@ -198,7 +208,11 @@ export class Bot implements LocalSnapshotSource {
 
     const target = this.currentTarget();
     if (target) this.fight(dt, target);
-    else this.wander(dt);
+    else {
+      this.targetId = null;
+      this.resetSight();
+      this.wander(dt);
+    }
 
     this.integrate(dt);
     this.watchdog(dt, !!target);
@@ -216,6 +230,8 @@ export class Bot implements LocalSnapshotSource {
       this.vel.set(0, 0, 0);
       this.waypoint = null;
       this.targetId = null;
+      this.resetSight();
+      this.repickT = 0;
       this.lastPos.copy(this.pos);
       this.syncBody();
     }
@@ -246,7 +262,7 @@ export class Bot implements LocalSnapshotSource {
       }
     }
     if (best?.id !== this.targetId) {
-      this.seenT = 0;
+      this.resetSight();
       this.rerollAim();
     }
     this.targetId = best?.id ?? null;
@@ -255,8 +271,11 @@ export class Bot implements LocalSnapshotSource {
   private fight(dt: number, t: BotCandidate) {
     const eye = this._eye.copy(this.eye);
     this.seeT -= dt;
+    if (eye.distanceToSquared(this.seenFrom) > 9 || t.center.distanceToSquared(this.seenTarget) > 9) this.resetSight();
     if (this.seeT <= 0) {
       this.seeT = 0.15;
+      this.seenFrom.copy(eye);
+      this.seenTarget.copy(t.center);
       this.canSee = this.hooks.world.hasLineOfSight(eye, t.center);
     }
     const visible = this.canSee;
@@ -291,6 +310,11 @@ export class Bot implements LocalSnapshotSource {
     const aimDir = this.forwardVec();
     const cone = this._cone.copy(to).divideScalar(dist);
     if (aimDir.dot(cone) < 0.985) return;
+    // Stagger awareness, not permission to fire through newly reached cover.
+    if (!this.hooks.world.hasLineOfSight(eye, t.center)) {
+      this.canSee = false;
+      return;
+    }
     this.fireT = rand(this.p.fireGap[0], this.p.fireGap[1]);
     this.firing = true;
     this.rerollAim();

@@ -81,6 +81,7 @@ export class Net {
   private handlers = new Map<string, Handler>();
   private guard = new Guard();
   private leaving = false;
+  private violation = (pid: string, reason: string) => this.flag(pid, reason);
 
   get active() {
     return !!this.peer && this.connected;
@@ -159,15 +160,18 @@ export class Net {
     if (this.isHost && msg.relay) {
       for (const [pid, c] of this.conns) if (pid !== from && c.open) c.send({ t: msg.t, d: msg.d, from });
     }
-    this.emit(msg.t, msg.d, from);
+    // Only the host may vouch for the sender of a relayed message.
+    const sender = !this.isHost && from === this.hostId && typeof msg.from === "string" ? msg.from : from;
+    this.emit(msg.t, msg.d, sender);
   }
 
   private vet(msg: NetMessage, from: string): boolean {
     if (!this.isHost && from === this.hostId) return true;
-    if (validPeerMessage(msg) && gameplayAllowed(this.guard, msg, from, this.id || "", (pid, why) => this.flag(pid, why)))
-      return true;
-    this.flag(from, typeof msg?.t === "string" ? `malformed ${msg.t}` : "malformed message");
-    return false;
+    if (!validPeerMessage(msg)) {
+      this.flag(from, "malformed message");
+      return false;
+    }
+    return gameplayAllowed(this.guard, msg, from, this.id || "", this.violation);
   }
 
   private flag(pid: string, reason: string) {
@@ -399,6 +403,7 @@ export class Net {
       }
     }
     this.conns.clear();
+    this.guard.clear();
     if (this.peer) {
       try {
         this.peer.destroy();

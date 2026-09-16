@@ -45,7 +45,7 @@ export interface LocalSnapshotSource {
   emote?: EmoteKind | null;
 }
 
-export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
+export function encodeLocal(p: LocalSnapshotSource, firing: boolean, out: Snapshot = []): Snapshot {
   const flags =
     (p.crouching ? F_CROUCH : 0) |
     (p.sliding ? F_SLIDE : 0) |
@@ -54,20 +54,20 @@ export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
     (p.onGround ? F_GROUND : 0) |
     (firing ? F_FIRING : 0) |
     (p.alive ? F_ALIVE : 0);
-  return [
-    +p.pos.x.toFixed(2),
-    +p.pos.y.toFixed(2),
-    +p.pos.z.toFixed(2),
-    +p.yaw.toFixed(2),
-    +p.pitch.toFixed(2),
-    kindId(p.weaponKind),
-    flags,
-    Math.round(p.hp),
-    +p.vel.x.toFixed(1),
-    +p.vel.y.toFixed(1),
-    +p.vel.z.toFixed(1),
-    emoteIndex(p.emote ?? null),
-  ];
+  out[0] = Math.round(p.pos.x * 100) / 100;
+  out[1] = Math.round(p.pos.y * 100) / 100;
+  out[2] = Math.round(p.pos.z * 100) / 100;
+  out[3] = Math.round(p.yaw * 100) / 100;
+  out[4] = Math.round(p.pitch * 100) / 100;
+  out[5] = kindId(p.weaponKind);
+  out[6] = flags;
+  out[7] = Math.round(p.hp);
+  out[8] = Math.round(p.vel.x * 10) / 10;
+  out[9] = Math.round(p.vel.y * 10) / 10;
+  out[10] = Math.round(p.vel.z * 10) / 10;
+  out[11] = emoteIndex(p.emote ?? null);
+  out.length = 12;
+  return out;
 }
 
 const INTERP_DELAY = 0.08;
@@ -191,8 +191,8 @@ export class RemotePlayer implements NetTarget {
   parts: BodyParts;
   private scene: THREE.Scene;
   private tag: THREE.Sprite | null;
-  private snapA: { p: THREE.Vector3; yaw: number; pitch: number; t: number } | null = null;
-  private snapB: { p: THREE.Vector3; yaw: number; pitch: number; t: number } | null = null;
+  private snapA = { p: new THREE.Vector3(), yaw: 0, pitch: 0, t: 0 };
+  private snapB = { p: new THREE.Vector3(), yaw: 0, pitch: 0, t: 0 };
   private _want = new THREE.Vector3();
   private phase = 0;
   private walk = 0;
@@ -243,9 +243,16 @@ export class RemotePlayer implements NetTarget {
 
   push(snap: Snapshot, now: number) {
     if (!snap || snap.length < 8) return;
-    const p = new THREE.Vector3(snap[0], snap[1], snap[2]);
-    this.snapA = this.snapB || { p: p.clone(), yaw: snap[3], pitch: snap[4], t: now - 0.07 };
-    this.snapB = { p, yaw: snap[3], pitch: snap[4], t: now };
+    const a = this.snapA;
+    const b = this.snapB;
+    a.p.copy(b.p);
+    a.yaw = b.yaw;
+    a.pitch = b.pitch;
+    a.t = b.t;
+    b.p.set(snap[0], snap[1], snap[2]);
+    b.yaw = snap[3];
+    b.pitch = snap[4];
+    b.t = now;
 
     this.setWeapon(kindFromId(snap[5]));
     const f = snap[6];
@@ -267,17 +274,20 @@ export class RemotePlayer implements NetTarget {
     }
 
     if (!this.visible) {
-      this.pos.copy(p);
+      this.pos.copy(b.p);
+      a.p.copy(b.p);
+      a.yaw = b.yaw;
+      a.pitch = b.pitch;
+      a.t = b.t;
       this.visible = true;
       this.parts.root.visible = true;
-      this.snapA = null;
     }
     this.lastSeen = now;
   }
 
   update(dt: number, now: number) {
-    if (this.snapB) {
-      const A = this.snapA || this.snapB;
+    if (this.visible) {
+      const A = this.snapA;
       const span = Math.max(0.02, this.snapB.t - A.t);
       const tt = now - INTERP_DELAY;
       const k = clamp((tt - A.t) / span, 0, 1);
