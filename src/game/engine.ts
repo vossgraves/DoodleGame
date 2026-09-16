@@ -549,21 +549,25 @@ export class Game {
         this.mode === "zombies" ? "don't let them touch you" : "erase the doodles",
       );
     }
-    if (!this.input.isTouch) this.input.requestLock();
+    if (this.input.device === "kbm") this.input.requestLock();
     this.tip(this.input.isTouch ? "joystick move · drag look · hold FIRE" : "WASD move · mouse look · click shoot", 4);
     this.loop(this.last);
   }
 
+  private resumeState: GameState = "playing";
+
   pause() {
     if (this.state !== "playing" && this.state !== "intermission") return;
+    this.resumeState = this.state;
     this.state = "paused";
     this.input.exitLock();
     this.onState?.("paused");
   }
   resume() {
     if (this.state !== "paused") return;
-    this.state = "playing";
-    if (!this.input.isTouch) this.input.requestLock();
+    this.state = this.resumeState;
+    if (this.input.device === "kbm") this.input.requestLock();
+    // Intermissions keep the playing HUD and controls, just as they do before pausing.
     this.onState?.("playing");
   }
 
@@ -930,7 +934,7 @@ export class Game {
     this.running = false;
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.onResize);
-    this.input.exitLock();
+    this.input.dispose();
     this.audio.stopMusic();
     this.combat.clear();
     this.match.leave();

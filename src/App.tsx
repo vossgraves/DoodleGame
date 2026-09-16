@@ -233,7 +233,7 @@ export default function App() {
   const [stats, setStats] = useState<account.Stats | null>(null);
   const [hud, setHud] = useState<HudSnap>(emptyHud);
   const [gstate, setGstate] = useState<GameState>("playing");
-  const [touch, setTouch] = useState(false);
+  const [touchUI, setTouchUI] = useState(isTouchDevice);
   const [sens, setSens] = useState<Sens>(loadSens);
   const [invert, setInvert] = useState(localStorage.getItem("doodle_invert") === "1");
   const [music, setMusic] = useState(localStorage.getItem("doodle_music") !== "0");
@@ -286,10 +286,6 @@ export default function App() {
   uiBusyRef.current = emoteOpen || chatOpen || swapping || settingsOpen || hudEdit;
 
   useEffect(() => {
-    setTouch(isTouchDevice());
-  }, []);
-
-  useEffect(() => {
     const mq = window.matchMedia("(orientation: portrait)");
     const update = () => setPortrait(mq.matches);
     update();
@@ -298,12 +294,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!touch) return;
+    if (!touchUI) return;
     return fullscreen.install(({ full, pending }) => {
       setIsFull(full);
       setFsPending(pending);
     });
-  }, [touch]);
+  }, [touchUI]);
 
   useEffect(() => {
     if (swapping && !hud.canSwap) setSwapping(false);
@@ -442,9 +438,16 @@ export default function App() {
     g.match.name = (nameRef.current || "doodle").slice(0, 14);
     g.match.mapKey = mapKey;
     g.match.mode = matchMode;
+    g.input.setDevice(isTouchDevice() ? "touch" : "kbm");
+    setTouchUI(g.input.device === "touch");
+    setLocked(g.input.pointerLocked);
+    g.input.onDeviceChange = (device) => {
+      setTouchUI(device === "touch");
+      if (device !== "kbm") g.input.exitLock();
+    };
     g.input.onLockChange = (l) => {
       setLocked(l);
-      if (!l && g.state === "playing" && !g.input.textMode && !uiBusyRef.current && !g.hud.canSwap) {
+      if (!l && g.input.device === "kbm" && g.state === "playing" && !g.input.textMode && !uiBusyRef.current && !g.hud.canSwap) {
         g.pause();
       }
     };
@@ -475,7 +478,9 @@ export default function App() {
     setScreen("menu");
   };
 
-  if (touch && portrait) return <RotatePrompt />;
+  const kbmUI = gameRef.current?.input.device === "kbm";
+
+  if (touchUI && portrait) return <RotatePrompt />;
 
   return (
     <div className="relative h-full w-full overflow-hidden paper-bg">
@@ -484,11 +489,11 @@ export default function App() {
         className="game-canvas"
         style={{ visibility: screen === "game" ? "visible" : "hidden" }}
         onClick={() => {
-          if (gstate === "playing") gameRef.current?.input.requestLock();
+          if (gstate === "playing" && gameRef.current?.input.device === "kbm") gameRef.current.input.requestLock();
         }}
       />
 
-      {touch && fsPending && !isFull && !hudEdit && <FullscreenNudge onDone={() => setFsPending(false)} />}
+      {touchUI && fsPending && !isFull && !hudEdit && <FullscreenNudge onDone={() => setFsPending(false)} />}
 
       {screen === "menu" && (
         <Menu
@@ -528,7 +533,7 @@ export default function App() {
           onBack={() => setScreen("menu")}
         />
       )}
-      {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touch} />}
+      {screen === "howto" && <HowTo onBack={() => setScreen("menu")} touch={touchUI} />}
       {screen === "loadout" && (
         <LoadoutScreen
           loadout={loadout}
@@ -566,7 +571,7 @@ export default function App() {
         <Settings
           overlay={settingsOpen}
           sens={sens}
-          touch={touch}
+          touch={touchUI}
           invert={invert}
           music={music}
           onSens={(v) => {
@@ -667,10 +672,10 @@ export default function App() {
           <HUD
             hud={hud}
             hidden={(gstate === "paused" && !hudEdit) || gstate === "dead" || !!hud.killCam}
-            touch={touch}
+            touch={touchUI}
             preset={hudPreset}
           />
-          {!touch && gstate === "playing" && !locked && !emoteOpen && !chatOpen && !hud.killCam && (
+          {kbmUI && gstate === "playing" && !locked && !uiBusyRef.current && !hud.killCam && (
             <div
               className="absolute inset-0 z-20 flex items-center justify-center bg-[rgba(246,243,230,0.35)]"
               onClick={() => gameRef.current?.input.requestLock()}
@@ -678,7 +683,7 @@ export default function App() {
               <div className="ink-panel px-10 py-6 text-center text-3xl blink">click to scribble</div>
             </div>
           )}
-          {touch && (gstate === "playing" || hudEdit) && !hud.killCam && <TouchControls gameRef={gameRef} />}
+          {touchUI && (gstate === "playing" || hudEdit) && !hud.killCam && <TouchControls gameRef={gameRef} />}
           {(gstate === "playing" || hudEdit) && !hud.killCam && (
             <StreakTray
               hud={hud}
@@ -697,10 +702,10 @@ export default function App() {
             </div>
           )}
           {(gstate === "playing" || hudEdit) && !hud.killCam && (
-            <EmoteWheel gameRef={gameRef} touch={touch} open={emoteOpen} setOpen={setEmoteOpen} />
+            <EmoteWheel gameRef={gameRef} touch={touchUI} open={emoteOpen} setOpen={setEmoteOpen} />
           )}
           {gstate === "playing" && mode === "arena" && (
-            <Chat gameRef={gameRef} tick={netTick} touch={touch} open={chatOpen} setOpen={setChatOpen} />
+            <Chat gameRef={gameRef} tick={netTick} touch={touchUI} open={chatOpen} setOpen={setChatOpen} />
           )}
           {hud.canSwap && !swapping && (
             <button className="swap-btn" onClick={() => setSwapping(true)} aria-label="change loadout">
@@ -2389,7 +2394,7 @@ function EmoteWheel({
     const g = gameRef.current;
     if (!g) return;
     if (open) g.input.exitLock();
-    else if (!touch) g.input.requestLock();
+    else if (!touch && g.state === "playing" && g.input.device === "kbm") g.input.requestLock();
   }, [open, gameRef, touch]);
 
   const pick: (k: EmoteKind) => void = (k) => {
@@ -2470,7 +2475,7 @@ function Chat({
     if (open) {
       g.input.exitLock();
       box.current?.focus();
-    } else if (!touch) g.input.requestLock();
+    } else if (!touch && g.state === "playing" && g.input.device === "kbm") g.input.requestLock();
     return () => {
       g.input.textMode = false;
     };
@@ -3206,7 +3211,9 @@ function TouchControls({ gameRef }: { gameRef: React.RefObject<Game | null> }) {
   });
 
   return (
-    <div className="touch-layer">
+    <div className="touch-layer" onPointerDownCapture={(e) => {
+      if (e.pointerType === "mouse") e.stopPropagation();
+    }}>
       <div
         className="look-pad"
         onPointerDown={onLookDown}
