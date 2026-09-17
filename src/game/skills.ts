@@ -3,24 +3,13 @@ import { World } from "./physics";
 import { INK, makeInkMaterial } from "./renderer";
 import { clamp, rand } from "./math";
 
-/**
- * Operator skills. One per loadout, on a charge that fills as the match runs —
- * so a skill is something you get back rather than something you get once.
- *
- * The grappler is the odd one out: it is not timed, it just switches the rope
- * on, and its own breath meter is its recharge. The rest are a burst of
- * something you hold for a few seconds and then lose.
- */
-
 export type SkillKind = "grappler" | "flamethrower" | "sparrow" | "trickster" | "poltergeist";
 
 export interface SkillDef {
   kind: SkillKind;
   name: string;
   blurb: string;
-  /** seconds to charge from empty; 0 means it is always simply available */
   charge: number;
-  /** seconds it stays up once triggered; 0 means it is a passive */
   duration: number;
 }
 
@@ -69,7 +58,6 @@ export function sanitizeSkill(raw: unknown): SkillKind {
   return typeof raw === "string" && raw in SKILLS ? (raw as SkillKind) : DEFAULT_SKILL;
 }
 
-/** Anything the skills may hurt. Same shape the scorestreaks use. */
 export interface SkillTarget {
   pos: THREE.Vector3;
   center: THREE.Vector3;
@@ -77,7 +65,6 @@ export interface SkillTarget {
   hit: (amount: number, crit: boolean) => void;
 }
 
-/** A decoy the trickster leaves behind, which bots will happily shoot at. */
 export interface Decoy {
   id: string;
   pos: THREE.Vector3;
@@ -99,7 +86,7 @@ export interface SkillHooks {
 }
 
 const FLAME_REACH = 9;
-const FLAME_CONE = 0.82; // cos of the half angle
+const FLAME_CONE = 0.82;
 const FLAME_TICK = 0.09;
 const FLAME_DAMAGE = 13;
 const BOLT_SPEED = 46;
@@ -119,27 +106,33 @@ interface DecoyUnit extends Decoy {
   mesh: THREE.Group;
   dir: THREE.Vector3;
   turnT: number;
+  rayT: number;
+  wallAhead: boolean;
 }
 
 export class Skills {
   hooks: SkillHooks;
   kind: SkillKind = DEFAULT_SKILL;
-  /** 0..1 — full means it can be called in */
   charge = 0;
-  /** seconds of the active window left; 0 when it is not up */
   activeT = 0;
 
   private flameTick = 0;
   private flames: THREE.Points | null = null;
   private flameGeo: THREE.BufferGeometry | null = null;
   private boltT = 0;
-  /** in flight; public so a probe can watch them land */
+  private boltGeo = new THREE.ConeGeometry(0.07, 0.5, 5).rotateX(Math.PI / 2);
+  private boltMat = makeInkMaterial({ ink: INK.ORANGE, fill: true });
+  private boltPool: Bolt[] = [];
   bolts: Bolt[] = [];
   private decoys: DecoyUnit[] = [];
   private decoyId = 0;
 
   constructor(hooks: SkillHooks) {
     this.hooks = hooks;
+    // A bolt lives four seconds and shots are at least BOLT_GAP apart.
+    for (let i = 0; i < Math.ceil(4 / BOLT_GAP) + 1; i++) {
+      this.boltPool.push({ mesh: new THREE.Mesh(this.boltGeo, this.boltMat), vel: new THREE.Vector3(), life: 0 });
+    }
   }
 
   setKind(k: SkillKind) {
@@ -156,24 +149,19 @@ export class Skills {
   get active() {
     return this.activeT > 0;
   }
-  /** The grappler has no window to open, so it is never "ready" in this sense. */
   get ready() {
     return this.def.duration > 0 && this.charge >= 1 && !this.active;
   }
-  /** While one of the weapon skills is up, the normal gun is put away. */
   get overridesWeapon() {
     return this.active && (this.kind === "flamethrower" || this.kind === "sparrow");
   }
-  /** Bots cannot pick you as a target while this is up. */
   get untargetable() {
     return this.active && this.kind === "poltergeist";
   }
-  /** Decoys the bots should treat as targets. */
   liveDecoys(): Decoy[] {
-    return this.decoys.filter((d) => d.alive);
+    return this.decoys;
   }
 
-  /** Call it in. Returns false when it is not charged. */
   use() {
     if (!this.ready) return false;
     this.charge = 0;
@@ -198,14 +186,11 @@ export class Skills {
     this.flyBolts(dt);
   }
 
-  // ---- flamethrower --------------------------------------------------------
-
   private makeFlames() {
     const n = 90;
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
     const mat = new THREE.PointsMaterial({ size: 0.42, sizeAttenuation: true });
-    // reuse the ink shader's colour channel by tinting the point sprite directly
     mat.color.set("#eb8c14");
     const pts = new THREE.Points(geo, mat);
     pts.frustumCulled = false;
@@ -220,7 +205,6 @@ export class Skills {
     if (this.flames && this.flameGeo) {
       this.flames.visible = firing;
       if (firing) {
-        // a spray of embers along the cone, redrawn every frame
         const p = this.flameGeo.getAttribute("position") as THREE.BufferAttribute;
         for (let i = 0; i < p.count; i++) {
           const t = Math.random();
@@ -239,21 +223,18 @@ export class Skills {
     this.flameTick -= dt;
     if (this.flameTick > 0) return;
     this.flameTick = FLAME_TICK;
-    const to = new THREE.Vector3();
+    const to = _to;
     for (const t of this.hooks.hostiles()) {
       if (!t.alive) continue;
       to.subVectors(t.center, eye);
       const d = to.length();
       if (d > FLAME_REACH) continue;
       to.divideScalar(d);
-      // close in, the cone opens right up; at reach it is narrow
       if (to.dot(fwd) < FLAME_CONE - (1 - d / FLAME_REACH) * 0.35) continue;
       if (!this.hooks.world.hasLineOfSight(eye, t.center)) continue;
       t.hit(FLAME_DAMAGE, false);
     }
   }
-
-  // ---- sparrow -------------------------------------------------------------
 
   private shootBolts(dt: number, firing: boolean) {
     this.boltT -= dt;
@@ -261,15 +242,14 @@ export class Skills {
     this.boltT = BOLT_GAP;
     const eye = this.hooks.eye();
     const fwd = this.hooks.forward();
-    const mesh = new THREE.Mesh(
-      new THREE.ConeGeometry(0.07, 0.5, 5),
-      makeInkMaterial({ ink: INK.ORANGE, fill: true }),
-    );
-    mesh.geometry.rotateX(Math.PI / 2);
-    mesh.position.copy(eye).addScaledVector(fwd, 0.7);
-    mesh.quaternion.setFromUnitVectors(FWD, fwd);
-    this.hooks.scene.add(mesh);
-    this.bolts.push({ mesh, vel: fwd.clone().multiplyScalar(BOLT_SPEED), life: 4 });
+    const bolt = this.boltPool.pop();
+    if (!bolt) return;
+    bolt.mesh.position.copy(eye).addScaledVector(fwd, 0.7);
+    bolt.mesh.quaternion.setFromUnitVectors(FWD, fwd);
+    bolt.vel.copy(fwd).multiplyScalar(BOLT_SPEED);
+    bolt.life = 4;
+    this.hooks.scene.add(bolt.mesh);
+    this.bolts.push(bolt);
   }
 
   private flyBolts(dt: number) {
@@ -277,34 +257,32 @@ export class Skills {
       const b = this.bolts[i];
       b.life -= dt;
       b.vel.y -= 9 * dt;
-      const step = b.vel.clone().multiplyScalar(dt);
+      const step = _step.copy(b.vel).multiplyScalar(dt);
       const dist = step.length();
-      const dir = step.clone().divideScalar(dist || 1);
+      const dir = _dir.copy(step).divideScalar(dist || 1);
       const hitWall = this.hooks.world.raycast(b.mesh.position, dir, dist);
       let burst: THREE.Vector3 | null = null;
       if (hitWall) burst = hitWall.point;
       else {
         for (const t of this.hooks.hostiles()) {
           if (t.alive && t.center.distanceTo(b.mesh.position) < 1.2) {
-            burst = t.center.clone();
+            burst = t.center;
             break;
           }
         }
       }
       if (burst || b.life <= 0) {
-        this.hooks.boom(burst ?? b.mesh.position.clone(), BOLT_RADIUS, BOLT_DAMAGE);
+        this.hooks.boom(_burst.copy(burst ?? b.mesh.position), BOLT_RADIUS, BOLT_DAMAGE);
         this.hooks.scene.remove(b.mesh);
-        b.mesh.geometry.dispose();
-        (b.mesh.material as THREE.Material).dispose();
-        this.bolts.splice(i, 1);
+        this.boltPool.push(b);
+        this.bolts[i] = this.bolts[this.bolts.length - 1];
+        this.bolts.pop();
         continue;
       }
       b.mesh.position.add(step);
       b.mesh.quaternion.setFromUnitVectors(FWD, dir);
     }
   }
-
-  // ---- trickster -----------------------------------------------------------
 
   private spawnDecoys() {
     const pos = this.hooks.pos();
@@ -324,11 +302,12 @@ export class Skills {
         mesh: g,
         dir,
         turnT: rand(0.6, 1.4),
+        rayT: rand(0, 0.12),
+        wallAhead: false,
       });
     }
   }
 
-  /** A stick figure, drawn the way the other players are. */
   private makeDecoyMesh() {
     const g = new THREE.Group();
     const m = makeInkMaterial({ ink: INK.BLUE, shadeBias: -0.2 });
@@ -346,28 +325,27 @@ export class Skills {
       if (!d.alive) continue;
       d.turnT -= dt;
       if (d.turnT <= 0) {
-        // wander rather than sprint in a straight line, so they read as people
         d.turnT = rand(0.6, 1.6);
         const a = Math.atan2(d.dir.x, d.dir.z) + rand(-0.8, 0.8);
         d.dir.set(Math.sin(a), 0, Math.cos(a));
       }
-      const step = d.dir.clone().multiplyScalar(DECOY_SPEED * dt);
-      const ahead = this.hooks.world.raycast(
-        new THREE.Vector3(d.pos.x, d.pos.y + 1, d.pos.z),
-        d.dir,
-        1.2,
-      );
-      if (ahead) {
-        // bounce off whatever it walked into
+      const step = _step.copy(d.dir).multiplyScalar(DECOY_SPEED * dt);
+      d.rayT -= dt;
+      if (d.rayT <= 0) {
+        d.rayT = 0.12;
+        _eye.set(d.pos.x, d.pos.y + 1, d.pos.z);
+        d.wallAhead = !!this.hooks.world.raycast(_eye, d.dir, 1.2);
+      }
+      if (d.wallAhead) {
         d.dir.multiplyScalar(-1);
+        d.wallAhead = false;
+        d.rayT = 0;
         d.turnT = rand(0.4, 0.9);
       } else d.pos.add(step);
       d.mesh.rotation.y = Math.atan2(-d.dir.x, -d.dir.z);
       d.center.set(d.pos.x, d.pos.y + 1.0, d.pos.z);
     }
   }
-
-  // ---- housekeeping --------------------------------------------------------
 
   private clearActive() {
     for (const d of this.decoys) {
@@ -395,13 +373,17 @@ export class Skills {
 
   dispose() {
     this.clearActive();
-    for (const b of this.bolts) {
-      this.hooks.scene.remove(b.mesh);
-      b.mesh.geometry.dispose();
-      (b.mesh.material as THREE.Material).dispose();
-    }
+    for (const b of this.bolts) this.hooks.scene.remove(b.mesh);
     this.bolts.length = 0;
+    this.boltPool.length = 0;
+    this.boltGeo.dispose();
+    this.boltMat.dispose();
   }
 }
 
 const FWD = new THREE.Vector3(0, 0, 1);
+const _step = new THREE.Vector3();
+const _dir = new THREE.Vector3();
+const _eye = new THREE.Vector3();
+const _to = new THREE.Vector3();
+const _burst = new THREE.Vector3();

@@ -8,9 +8,8 @@
 
 ## Tools
 
-- Use Read, Write, Edit, NotebookEdit for file contents — not `cat`/`sed`/heredocs
-- Bash is for git, npm, process management, deletes, and searches
-- Applies under bypass-permissions mode too
+- Use the dedicated read/edit file tools for file contents — not `cat`/`sed`/heredocs
+- The shell is for git, npm, process management, deletes, and searches
 
 ## Commands
 

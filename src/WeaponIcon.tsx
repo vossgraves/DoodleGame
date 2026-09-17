@@ -1,7 +1,3 @@
-// Side-profile weapon silhouettes, drawn in the same ballpoint style as the rest
-// of the game rather than imported from anywhere. Each is a 48x24 side view so a
-// row of them reads at a glance in the loadout and on the HUD.
-
 const P = {
   fill: "none",
   stroke: "currentColor",
@@ -79,7 +75,6 @@ const SHAPES: Record<string, React.ReactNode> = {
   ),
   knife: (
     <>
-      {/* switchblade: casing, pivot rivet, blade snapped out of the front */}
       <path d="M5 12.5h18.5v5.5H7a2 2 0 0 1-2-2z" />
       <circle cx="21.5" cy="15.2" r="1.3" />
       <path d="M23.5 12.8 44 9.5l-3 4.4-17.5 1.2z" />
@@ -88,7 +83,6 @@ const SHAPES: Record<string, React.ReactNode> = {
   ),
   katana: (
     <>
-      {/* long single edge, squared tsuba, wrapped grip */}
       <path d="M17 12.4 45 9l-1.6 3.4L17 15.2z" />
       <path d="M14.5 10.6h2.6v6h-2.6z" />
       <path d="M4 12.2h10.5v2.6H4z" />

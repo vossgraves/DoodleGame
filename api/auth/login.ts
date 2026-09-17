@@ -2,7 +2,6 @@ import { sql, type UserRow } from "../_lib/db";
 import { createSession, hashPassword, verifyPassword } from "../_lib/auth";
 import { HttpError, handler, methodIs, readBody, type ApiRequest, type ApiResponse } from "../_lib/http";
 
-/** A throwaway hash so a missing user costs the same time as a wrong password. */
 let decoyHash: string | null = null;
 async function decoy(pw: string) {
   if (!decoyHash) decoyHash = await hashPassword("this-account-does-not-exist");
@@ -21,8 +20,6 @@ export default handler(async (req: ApiRequest, res: ApiResponse) => {
   `) as UserRow[];
   const row = rows[0];
 
-  // Same message and roughly the same cost either way, so this cannot be used to
-  // find out which names exist.
   if (!row) {
     await decoy(password);
     throw new HttpError(401, "wrong name or password");

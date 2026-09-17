@@ -5,6 +5,5 @@ export default handler(async (req: ApiRequest, res: ApiResponse) => {
   methodIs(req, "POST");
   const token = bearer(req);
   if (token) await destroySession(token);
-  // signing out is idempotent: no token is still a successful sign-out
   res.status(200).json({ ok: true });
 });

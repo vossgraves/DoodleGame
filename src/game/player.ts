@@ -45,18 +45,13 @@ export interface WeaponDef {
   fovKick: number;
   cycleDur: number;
   isGun: boolean;
-  /** how briskly the sights come up — higher is snappier */
   adsSpeed: number;
-  /** multiplier on walk speed while this is the weapon in hand */
   moveMul: number;
-  /** suppressed: no bang, no flash to speak of */
   quiet: boolean;
-  /** rounds committed per trigger pull; 0 or absent means not a burst weapon */
   burst?: number;
   burstDelay?: number;
 }
 
-/** How the base weapons are written: handling is filled in below. */
 type BaseDef = Omit<WeaponDef, "adsSpeed" | "moveMul" | "quiet">;
 
 const RAW_DEFS: Record<WeaponKind, BaseDef> = {
@@ -314,11 +309,6 @@ const RAW_DEFS: Record<WeaponKind, BaseDef> = {
   },
 };
 
-/**
- * Handling, kept apart from the ballistics above so the difference between a
- * light SMG and an LMG you have to heave around reads at a glance. Anything
- * left out is an average gun.
- */
 const HANDLING: Partial<Record<WeaponKind, { adsSpeed?: number; moveMul?: number }>> = {
   lmg: { adsSpeed: 8.0, moveMul: 0.9 },
   sniper: { adsSpeed: 7.5, moveMul: 0.94 },
@@ -338,15 +328,10 @@ const DEFS = Object.fromEntries(
   ]),
 ) as Record<WeaponKind, WeaponDef>;
 
-/** Every weapon, for loadout UIs. Guns first, melee last. */
 export const WEAPONS: { kind: WeaponKind; name: string; hint: string; isGun: boolean }[] = (
   ["rifle", "carbine", "smg", "lmg", "shotgun", "sniper", "revolver", "pistol", "knife", "katana"] as WeaponKind[]
 ).map((k) => ({ kind: k, name: DEFS[k].name, hint: DEFS[k].hint, isGun: DEFS[k].isGun }));
 
-/**
- * A weapon's place on the wire. The slot index used to travel instead, which
- * told the receiver nothing — everyone's slot 2 is a different gun.
- */
 export const kindId = (k: WeaponKind) => WEAPONS.findIndex((w) => w.kind === k);
 export const kindFromId = (i: number): WeaponKind => WEAPONS[i]?.kind ?? "rifle";
 
@@ -354,15 +339,12 @@ export const GUN_KINDS = WEAPONS.filter((w) => w.isGun).map((w) => w.kind);
 export const MELEE_KINDS = WEAPONS.filter((w) => !w.isGun).map((w) => w.kind);
 export const DEFAULT_LOADOUT: WeaponKind[] = ["rifle", "shotgun", "sniper", "knife"];
 
-/** The bare definition for a weapon, before any gunsmith work. */
 export function weaponDef(kind: WeaponKind): WeaponDef {
   return { ...DEFS[kind] };
 }
 
-/** Names that used to exist, so an old saved loadout still works. */
 const LEGACY_KINDS: Record<string, WeaponKind> = {};
 
-/** Drop anything unknown and guarantee a usable set of slots. */
 export function sanitizeLoadout(raw: unknown): WeaponKind[] {
   const all = new Set(WEAPONS.map((w) => w.kind));
   const list = (Array.isArray(raw) ? raw : [])
@@ -374,15 +356,10 @@ export function sanitizeLoadout(raw: unknown): WeaponKind[] {
   return [...guns, melee];
 }
 
-/** How long a weapon takes to swing up after a switch. */
 export const EQUIP_DUR = 0.34;
-/** How far back the blade sits when folded into the handle. */
 const BLADE_RETRACT = 0.47;
-/** How long a katana swing takes from draw to follow-through. */
 const SLASH_DUR = 0.27;
-/** The flick after turning a shot away with the guard. */
 const PARRY_FLICK = 0.22;
-/** How long after raising the guard a block still counts as a clean parry. */
 const PARRY_WINDOW = 0.55;
 
 function bx(w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, parent: THREE.Object3D) {
@@ -402,7 +379,6 @@ function cyl(r: number, h: number, x: number, y: number, z: number, mat: THREE.M
 }
 
 type V3 = readonly [number, number, number];
-/** Where each gun's bolt-on parts hang. Melee has none, so it is absent. */
 const ANCHORS: Partial<Record<WeaponKind, { muzzle: V3; sight: V3; mag: V3; stock: V3 }>> = {
   rifle: { muzzle: [0, 0.08, -1.0], sight: [0, 0.22, -0.12], mag: [0, -0.2, -0.06], stock: [0, 0.04, 0.3] },
   carbine: { muzzle: [0, 0.08, -0.84], sight: [0, 0.22, -0.12], mag: [0, -0.2, -0.06], stock: [0, 0.04, 0.26] },
@@ -412,12 +388,10 @@ const ANCHORS: Partial<Record<WeaponKind, { muzzle: V3; sight: V3; mag: V3; stoc
   sniper: { muzzle: [0, 0.1, -1.3], sight: [0, 0.26, -0.5], mag: [0, -0.16, -0.06], stock: [0, 0.06, 0.3] },
   revolver: { muzzle: [0, 0.06, -0.54], sight: [0, 0.14, -0.16], mag: [0, 0.0, -0.04], stock: [0, -0.14, 0.16] },
   pistol: { muzzle: [0, 0.05, -0.42], sight: [0, 0.14, -0.1], mag: [0, -0.24, 0.02], stock: [0, 0.06, 0.1] },
-  // the knife takes no rails, but it still hangs a charm and wears a sticker
   knife: { muzzle: [0, 0.02, -0.5], sight: [0, 0.1, -0.1], mag: [0, -0.1, 0.1], stock: [0, -0.02, 0.2] },
   katana: { muzzle: [0, 0.0, -1.05], sight: [0, 0.08, -0.2], mag: [0, -0.08, 0.1], stock: [0, 0.0, 0.24] },
 };
 
-/** Flat sticker shapes, drawn once and stuck on the side of the receiver. */
 function glyphGeo(glyph: "star" | "cross" | "ring" | "bolt" | "blot") {
   if (glyph === "star") return starGeo(5, 0.16, 0.07);
   if (glyph === "blot") return new THREE.CircleGeometry(0.13, 9);
@@ -433,7 +407,6 @@ function glyphGeo(glyph: "star" | "cross" | "ring" | "bolt" | "blot") {
     s.moveTo(...pts[0]);
     for (const p of pts.slice(1)) s.lineTo(...p);
   } else {
-    // lightning bolt
     const pts: [number, number][] = [
       [0.02, 0.16], [-0.11, 0.0], [-0.02, 0.0], [-0.05, -0.16], [0.1, 0.02], [0.01, 0.02],
     ];
@@ -468,28 +441,22 @@ export class Weapon {
   root: THREE.Group;
   flash: THREE.Group;
   blade: THREE.Object3D | null = null;
-  /** the sliding part of a switchblade; null for everything else */
   edge: THREE.Object3D | null = null;
   blocking = false;
   blockT = 0;
   slashT = 0;
-  /** which way the next katana swing travels: alternates through a combo */
   comboStep = 0;
   private comboT = 0;
-  /** a parry flick, counted down after a shot is turned away */
   parryT = 0;
   parryDir = 1;
-  /** how bloody the blade is, 0..1, which is how many smears show */
   private bloodLevel = 0;
   private smears: THREE.Mesh[] = [];
   burstLeft = 0;
   burstT = 0;
-  /** counts down while the gun is being swung up into view */
   equipT = 0;
   private build_: GunBuild | undefined;
   private skin: WeaponSkin | undefined;
   private camo!: ReturnType<typeof camoById>;
-  /** the dangling charm, if one is fitted — swings on its own */
   private charmPivot: THREE.Object3D | null = null;
   private charmT = 0;
   private ink: THREE.ShaderMaterial;
@@ -504,7 +471,6 @@ export class Weapon {
     this.mag = this.def.magSize;
     this.reserve = this.def.reserve;
     this.spreadCur = this.def.spread;
-    // the camo decides which pens the whole gun is drawn with
     const camo = camoById(skin?.camo);
     this.camo = camo;
     this.ink = makeInkMaterial({
@@ -531,7 +497,7 @@ export class Weapon {
       bx(0.12, 0.16, 0.55, 0, 0.04, -0.1, m, this.root);
       bx(0.07, 0.22, 0.14, 0.0, -0.12, 0.08, b, this.root);
       bx(0.04, 0.08, 0.22, 0, 0.16, -0.2, m, this.root);
-      bx(0.09, 0.09, 0.09, 0, 0.14, -0.05, this.solid, this.root); // red dot
+      bx(0.09, 0.09, 0.09, 0, 0.14, -0.05, this.solid, this.root);
       this.placeFlash(0, 0.08, -1.0, 0.9);
       this.hand(0.16, -0.12, 0.05);
       this.hand(-0.05, -0.02, -0.28);
@@ -589,34 +555,30 @@ export class Weapon {
       this.placeFlash(0, 0.05, -0.42, 0.7);
       this.hand(0.12, -0.08, 0.02);
     } else if (k === "katana") {
-      // A long single edge, a squared tsuba and a wrapped grip. It carries the
-      // blood it earns on the flat of the blade, laid on one streak per kill.
       const sword = new THREE.Group();
       const steel = makeInkMaterial({ ink: this.camo.ink, fill: true });
-      bx(0.014, 0.038, 1.0, 0, 0, -0.55, steel, sword); // blade
-      bx(0.014, 0.022, 0.09, 0, 0.008, -1.07, steel, sword); // kissaki
-      bx(0.02, 0.05, 0.9, 0, 0.026, -0.52, m, sword); // the shinogi ridge, in outline
-      bx(0.1, 0.1, 0.022, 0, 0, -0.05, b, sword); // tsuba
-      bx(0.034, 0.04, 0.32, 0, 0, 0.13, b, sword); // grip core
-      for (let i = 0; i < 6; i++) bx(0.04, 0.045, 0.022, 0, 0, 0.02 + i * 0.048, m, sword); // wrap
+      bx(0.014, 0.038, 1.0, 0, 0, -0.55, steel, sword);
+      bx(0.014, 0.022, 0.09, 0, 0.008, -1.07, steel, sword);
+      bx(0.02, 0.05, 0.9, 0, 0.026, -0.52, m, sword);
+      bx(0.1, 0.1, 0.022, 0, 0, -0.05, b, sword);
+      bx(0.034, 0.04, 0.32, 0, 0, 0.13, b, sword);
+      for (let i = 0; i < 6; i++) bx(0.04, 0.045, 0.022, 0, 0, 0.02 + i * 0.048, m, sword);
       this.root.add(sword);
       this.blade = sword;
       this.buildSmears(sword);
       this.hand(0.0, -0.01, 0.06);
       this.hand(0.0, -0.01, 0.21);
     } else {
-      // Switchblade: a fixed casing plus a blade that lives inside it and snaps
-      // forward when the knife is drawn.
       const knife = new THREE.Group();
       const steel = makeInkMaterial({ ink: INK.BLACK, fill: true });
-      bx(0.085, 0.1, 0.42, 0, 0.02, 0.05, b, knife); // casing
-      bx(0.095, 0.02, 0.34, 0, 0.065, 0.03, m, knife); // seam down the side
-      bx(0.105, 0.04, 0.04, 0, 0.0, -0.12, m, knife); // pivot rivet
+      bx(0.085, 0.1, 0.42, 0, 0.02, 0.05, b, knife);
+      bx(0.095, 0.02, 0.34, 0, 0.065, 0.03, m, knife);
+      bx(0.105, 0.04, 0.04, 0, 0.0, -0.12, m, knife);
 
       const edge = new THREE.Group();
       bx(0.028, 0.062, 0.52, 0, 0.02, -0.42, steel, edge);
-      bx(0.034, 0.016, 0.44, 0, 0.048, -0.4, m, edge); // bevel
-      bx(0.062, 0.035, 0.035, 0, 0.055, -0.2, m, edge); // thumb stud
+      bx(0.034, 0.016, 0.44, 0, 0.048, -0.4, m, edge);
+      bx(0.062, 0.035, 0.035, 0, 0.055, -0.2, m, edge);
       knife.add(edge);
 
       this.root.add(knife);
@@ -630,15 +592,10 @@ export class Weapon {
     this.root.visible = false;
   }
 
-  /**
-   * Blood that clings to the flat of the blade. Each streak is a ragged sliver
-   * built in the plane of the steel and inset inside its silhouette, so nothing
-   * ever hangs off an edge no matter how many are showing.
-   */
   private buildSmears(sword: THREE.Group) {
     const blood = makeInkMaterial({ ink: INK.RED, fill: true, side: THREE.DoubleSide });
-    const BH = 0.017; // half the blade's height
-    const BX = 0.0075; // sit just proud of the face
+    const BH = 0.017;
+    const BX = 0.0075;
     const spec: [number, number, number][] = [
       [-0.34, 0.3, 1],
       [-0.7, 0.26, -1],
@@ -661,7 +618,7 @@ export class Weapon {
       sh.lineTo(len / 2, -BH * 0.92);
       sh.closePath();
       const geo = new THREE.ShapeGeometry(sh, 2);
-      geo.rotateY(Math.PI / 2); // lay it into the plane of the blade
+      geo.rotateY(Math.PI / 2);
       const mesh = new THREE.Mesh(geo, blood);
       mesh.position.set(side * BX, 0, zc);
       mesh.visible = false;
@@ -670,7 +627,6 @@ export class Weapon {
     }
   }
 
-  /** Camo bands, a hanging charm and a stuck-on sticker. */
   private dress() {
     const anchor = ANCHORS[this.def.kind];
     if (!anchor) return;
@@ -690,7 +646,6 @@ export class Weapon {
       const pivot = new THREE.Group();
       pivot.position.set(sx + 0.09, sy - 0.02, sz);
       const mat = makeInkMaterial({ ink: charm.ink, fill: true });
-      // the cord it hangs on, then the trinket at the bottom of it
       bx(0.012, 0.13, 0.012, 0, -0.065, 0, mat, pivot);
       if (charm.shape === "clip") {
         bx(0.015, 0.1, 0.015, 0, -0.18, 0, mat, pivot);
@@ -717,7 +672,6 @@ export class Weapon {
     if (sticker) {
       const mat = makeInkMaterial({ ink: sticker.ink, fill: true, side: THREE.DoubleSide });
       const decal = new THREE.Mesh(glyphGeo(sticker.glyph), mat);
-      // flat against the left face of the receiver, facing outwards
       decal.position.set(-0.088, 0.04, -0.02);
       decal.rotation.y = -Math.PI / 2;
       decal.scale.setScalar(0.6);
@@ -725,11 +679,6 @@ export class Weapon {
     }
   }
 
-  /**
-   * Bolt the gunsmith parts onto the model. Everything hangs off a per-weapon
-   * anchor so one set of part shapes serves all eight guns, and anything that
-   * lengthens the barrel drags the muzzle flash forward with it.
-   */
   private fitAttachments() {
     const anchor = ANCHORS[this.def.kind];
     if (!anchor || !this.build_) return;
@@ -754,7 +703,6 @@ export class Weapon {
         bx(0.05, 0.09, 0.06, x, y - 0.06, z + 0.1, b, this.root);
         bx(0.05, 0.09, 0.06, x, y - 0.06, z - 0.16, b, this.root);
       } else {
-        // canted irons: a folded post off to one side, nothing to look through
         bx(0.02, 0.09, 0.02, x + 0.06, y - 0.03, z - 0.1, b, this.root);
         bx(0.02, 0.07, 0.02, x + 0.06, y - 0.04, z + 0.1, b, this.root);
       }
@@ -804,7 +752,6 @@ export class Weapon {
         bx(0.03, 0.03, 0.3, x, y - 0.07, z + 0.1, m, this.root);
         bx(0.07, 0.17, 0.03, x, y, z + 0.25, m, this.root);
       }
-      // nostock deliberately adds nothing
     }
   }
 
@@ -830,12 +777,6 @@ export class Weapon {
     this.root.add(arm);
   }
 
-  /**
-   * The sword's own pose. It blends to an absolute guard rather than adding an
-   * offset, because the shared animator already scales the base rotation by how
-   * far into the aim you are — the same offset would land differently depending
-   * on how far the guard had come up.
-   */
   private animateKatana(dt: number) {
     const g = this.blade;
     if (!g) return;
@@ -846,7 +787,6 @@ export class Weapon {
     let ry = 0;
     let rz = 0;
     if (guard > 0.001) {
-      // the sword comes in close and upright, between you and whatever is coming
       rx += 1.15 * guard;
       ry += 0.28 * guard;
       rz += 1.2 * guard;
@@ -864,7 +804,6 @@ export class Weapon {
       g.position.set(0, 0, 0);
     }
     if (this.parryT > 0) {
-      // a flick of the wrist, not something that throws the whole pose around
       const e = Math.sin(clamp(this.parryT / PARRY_FLICK, 0, 1) * Math.PI);
       rz += this.parryDir * e * 0.42;
       ry += this.parryDir * e * 0.16;
@@ -874,20 +813,17 @@ export class Weapon {
     this.showBlood(dt);
   }
 
-  /** Mark the blade — one more streak shows, and they dry off slowly. */
   bloody(amount = 0.34) {
     this.bloodLevel = clamp(this.bloodLevel + amount, 0, 1);
   }
 
   private showBlood(dt: number) {
     if (!this.smears.length) return;
-    // it dries off slowly, so a bloody blade is a record of the last minute
     this.bloodLevel = Math.max(0, this.bloodLevel - 0.02 * dt);
     const showing = Math.round(this.bloodLevel * this.smears.length);
     for (let i = 0; i < this.smears.length; i++) this.smears[i].visible = i < showing;
   }
 
-  /** Start a swing. Returns the direction it travels, for the arc effect. */
   startSlash() {
     this.slashT = SLASH_DUR;
     if (this.def.kind === "katana") {
@@ -898,7 +834,6 @@ export class Weapon {
     return 1;
   }
 
-  /** A shot turned away by the guard. */
   parried(dir: number) {
     this.parryT = PARRY_FLICK;
     this.parryDir = dir;
@@ -964,7 +899,6 @@ export class Weapon {
       this.blade.rotation.z = damp(this.blade.rotation.z, this.slashT > 0 ? 0.8 : guard * -0.3, 18, dt);
     }
     if (this.edge) {
-      // hold folded while the knife comes up, then snap out over the last third
       const p = clamp(1 - this.equipT / (EQUIP_DUR * 0.62), 0, 1);
       const out = 1 - (1 - p) ** 3;
       this.edge.position.z = BLADE_RETRACT * (1 - out);
@@ -975,7 +909,6 @@ export class Weapon {
       this.parryT = Math.max(0, this.parryT - dt);
     }
     if (this.charmPivot) {
-      // a slow idle sway, with a jolt every time the gun goes off
       this.charmT += dt;
       const jolt = this.fireT > 0 ? this.fireT / Math.max(0.05, this.def.interval) : 0;
       this.charmPivot.rotation.z = Math.sin(this.charmT * 2.3) * 0.16 + jolt * 0.5;
@@ -994,20 +927,14 @@ export interface PlayerHooks {
   scene: THREE.Scene;
   onFire: (w: Weapon, origin: THREE.Vector3, dir: THREE.Vector3, ads: boolean) => void;
   onSlash: (origin: THREE.Vector3, dir: THREE.Vector3, dmg: number, heavy: boolean) => void;
-  /** a shot turned away by a clean parry, sent back where it came from */
   onDeflect: (origin: THREE.Vector3, dir: THREE.Vector3, dmg: number) => void;
-  /** things the grapple may hook and yank */
   grappleTargets?: () => GrappleTarget[];
-  /** short line of advice for the HUD */
   tip?: (s: string) => void;
   onNade: (origin: THREE.Vector3, dir: THREE.Vector3, charge: number) => void;
   onHurt: (amount: number, from: THREE.Vector3 | null) => void;
   onDeath: () => void;
-  /** weapons to carry; defaults to DEFAULT_LOADOUT */
   loadout?: WeaponKind[];
-  /** per-weapon gunsmith builds */
   gunsmith?: Gunsmith;
-  /** per-weapon camo, charm and sticker */
   wardrobe?: Wardrobe;
 }
 
@@ -1018,12 +945,9 @@ const CROUCH = 3.5;
 const ACCEL = 140;
 const FRICTION = 8;
 const AIR_ACCEL = 36;
-/** air control tops out well below run speed: you steer, you do not accelerate */
 const AIR_CAP = 7.5;
 const JUMP = 9.4;
-/** how fast you have to be going before a crouch turns into a slide */
 const SLIDE_ENTRY = 6.3;
-/** a slide is boosted up to this, never past it */
 const SLIDE_CAP = 12.8;
 const SLIDE_DRAG = 6.5;
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -1066,27 +990,19 @@ export class Player {
   bobAmt = 0;
   coyote = 0;
   jumpBuf = 0;
-  /** seconds since the feet left the ground */
   airT = 0;
-  /** seconds since the last wall contact, for the wall-jump window */
   private wallTouch = 9;
   private wallN: THREE.Vector3 | null = null;
   private hitWall = false;
   private wallJumpCd = 0;
   private mantleCd = 0;
-  /** brief low-friction window after a fast landing */
   private landGraceT = 0;
-  /** metres walked since the last footstep */
   private stepDist = 0;
   grapple!: Grapple;
-  /** false when the operator skill in this loadout is not the grappler */
   grappleEnabled = true;
-  /** true while a skill has replaced the gun in your hands */
   weaponHidden = false;
-  /** which skill model to hold instead, if any */
   private skillModels = new Map<string, THREE.Group>();
   private skillShown = "";
-  /** the emote or inspect currently playing, and how far through it is */
   emote: EmoteKind | null = null;
   emoteT = 0;
   private emoteRig: THREE.Group | null = null;
@@ -1104,11 +1020,8 @@ export class Player {
   rig = new THREE.Group();
   lookDelta = new THREE.Vector2();
   meleeStreak = 0;
-  /** which way the last swing travelled, for the arc the engine draws */
   slashDir = 1;
-  /** true once this life has fired, thrown or swung — closes the loadout window */
   spentResource = false;
-  /** aim-down-sights as a toggle rather than hold; a settings choice */
   adsToggle = false;
   private adsOn = false;
   private adsBlend = 0;
@@ -1193,7 +1106,7 @@ export class Player {
     if (i < 0 || i >= this.weapons.length) return;
     if (i === this.weaponIndex && !silent) return;
     this.weapon.unequip();
-    this.adsOn = false; // a toggled scope must not survive a weapon change
+    this.adsOn = false;
     this.weaponIndex = i;
     this.weapon = this.weapons[i];
     this.weapon.equip();
@@ -1211,13 +1124,11 @@ export class Player {
       w.root.traverse((o) => {
         const m = o as THREE.Mesh;
         if (m.geometry) m.geometry.dispose();
-        // each weapon builds its own materials off its camo, so those go too
         if (m.material) (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x.dispose());
       });
     }
   }
 
-  /** Swap the whole kit — used by the brief window after a respawn. */
   setLoadout(kinds: WeaponKind[], gunsmith?: Gunsmith, wardrobe?: Wardrobe) {
     this.clearWeapons();
     if (gunsmith) this.gunsmith = gunsmith;
@@ -1230,10 +1141,6 @@ export class Player {
     this.hooks.audio.switchWeapon();
   }
 
-  /**
-   * Take a gun off the ground. Already carrying it? Top up the ammo instead of
-   * pointlessly swapping the same weapon in.
-   */
   pickUpWeapon(kind: WeaponKind): boolean {
     const def = DEFS[kind];
     if (!def || !def.isGun) return false;
@@ -1243,7 +1150,6 @@ export class Player {
       this.weapons[have].addAmmo(Math.round(def.magSize * 2));
       return true;
     }
-    // replace what is in your hands if that is a gun, else the first gun slot
     let slot = this.weapon.def.isGun ? this.weaponIndex : this.weapons.findIndex((w) => w.def.isGun);
     if (slot < 0) slot = 0;
 
@@ -1253,11 +1159,9 @@ export class Player {
     old.root.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.geometry) m.geometry.dispose();
-      // each weapon builds its own materials off its camo, so those go too
       if (m.material) (Array.isArray(m.material) ? m.material : [m.material]).forEach((x) => x.dispose());
     });
 
-    // a gun off the ground still gets your build for it — the parts are yours
     const fresh = new Weapon(kind, this.gunsmith[kind], this.wardrobe[kind]);
     this.weapons[slot] = fresh;
     this.rig.add(fresh.root);
@@ -1274,9 +1178,6 @@ export class Player {
     if (!this.weapon.def.isGun && this.weapon.blocking && from) {
       const to = new THREE.Vector3().subVectors(from, this.eye).normalize();
       if (to.dot(this.forward) > 0.45) {
-        // A guard raised in the last moment is a clean parry: it turns the shot
-        // away entirely and sends it back the way it came. Hold the guard up
-        // indefinitely and it is only a block, which still costs you.
         const clean = this.weapon.def.kind === "katana" && this.weapon.blockT < PARRY_WINDOW;
         if (clean) {
           this.weapon.parried(to.dot(this.right) > 0 ? 1 : -1);
@@ -1317,42 +1218,33 @@ export class Player {
     this.hp = Math.min(this.maxHp, this.hp + n);
   }
 
-  /**
-   * The things a skill puts in your hands instead of a gun. Built once and
-   * hidden, since a skill can come up several times in a match.
-   */
   private buildSkillModels() {
     const ink = () => makeInkMaterial({ ink: INK.BLUE, shadeBias: -0.15 });
     const dark = () => makeInkMaterial({ ink: INK.BLACK, shadeBias: -0.1 });
 
     const flame = new THREE.Group();
     flame.scale.setScalar(0.48);
-    cyl(0.075, 0.7, 0, 0.02, -0.42, ink(), flame); // barrel
-    cyl(0.11, 0.16, 0, 0.02, -0.78, dark(), flame); // flared nozzle
-    bx(0.1, 0.2, 0.16, 0, -0.14, 0.06, dark(), flame); // grip
-    cyl(0.13, 0.42, 0.16, 0.06, 0.34, ink(), flame, "z"); // fuel bottle slung back
-    bx(0.03, 0.03, 0.34, 0.1, 0.04, 0.06, dark(), flame); // hose
+    cyl(0.075, 0.7, 0, 0.02, -0.42, ink(), flame);
+    cyl(0.11, 0.16, 0, 0.02, -0.78, dark(), flame);
+    bx(0.1, 0.2, 0.16, 0, -0.14, 0.06, dark(), flame);
+    cyl(0.13, 0.42, 0.16, 0.06, 0.34, ink(), flame, "z");
+    bx(0.03, 0.03, 0.34, 0.1, 0.04, 0.06, dark(), flame);
     flame.visible = false;
     this.rig.add(flame);
     this.skillModels.set("flamethrower", flame);
 
     const bow = new THREE.Group();
     bow.scale.setScalar(0.48);
-    // two limbs and a string, held out to the left the way a bow is
     bx(0.03, 0.5, 0.03, -0.1, 0.34, -0.3, ink(), bow).rotation.x = 0.35;
     bx(0.03, 0.5, 0.03, -0.1, -0.3, -0.3, ink(), bow).rotation.x = -0.35;
     bx(0.05, 0.24, 0.06, -0.1, 0.02, -0.3, dark(), bow);
-    bx(0.012, 0.012, 1.0, -0.1, 0.02, -0.18, dark(), bow); // the string, drawn back
-    bx(0.03, 0.03, 0.6, -0.02, 0.02, -0.34, ink(), bow); // nocked bolt
+    bx(0.012, 0.012, 1.0, -0.1, 0.02, -0.18, dark(), bow);
+    bx(0.03, 0.03, 0.6, -0.02, 0.02, -0.34, ink(), bow);
     bow.visible = false;
     this.rig.add(bow);
     this.skillModels.set("sparrow", bow);
   }
 
-  /**
-   * The bare hands an emote uses. Two shoulders with an arm hanging off each,
-   * so the same shoulder angles that pose a stick figure pose these.
-   */
   private buildEmoteRig() {
     const g = new THREE.Group();
     g.visible = false;
@@ -1376,7 +1268,6 @@ export class Player {
     this.emoteArms = { l, r };
   }
 
-  /** Start an emote, if nothing more important is going on. */
   playEmote(kind: EmoteKind) {
     if (!this.alive || this.aiming || this.sprinting || this.grapple.attached) return false;
     this.emote = kind;
@@ -1411,7 +1302,6 @@ export class Player {
     this.emoteArms.r.rotation.copy(pose.right);
   }
 
-  /** Show the model a skill puts in your hands, or none. */
   setSkillModel(name: string) {
     if (name === this.skillShown) return;
     const prev = this.skillModels.get(this.skillShown);
@@ -1421,11 +1311,6 @@ export class Player {
     if (next) next.visible = true;
   }
 
-  /**
-   * Ledge grab. Look for a wall just in front of your chest, then a walkable top
-   * within reach above it with room to stand, and if both are there give
-   * yourself exactly the upward velocity needed to clear it.
-   */
   private tryMantle() {
     const world = this.hooks.world;
     const fx = -Math.sin(this.yaw);
@@ -1439,7 +1324,6 @@ export class Player {
     if (!top || top.ny < 0.5) return;
     const dy = top.point.y - this.pos.y;
     if (dy < 0.5 || dy > 2.4) return;
-    // no point pulling up into something solid
     const stand = new THREE.Vector3(over.x, top.point.y + 0.08, over.z);
     if (world.blocked(stand, 0.34, CROUCH_H)) return;
 
@@ -1452,22 +1336,25 @@ export class Player {
     this.fovKick.kick(45);
   }
 
+  private _wf = new THREE.Vector3();
+  private _wr = new THREE.Vector3();
+  private _w = new THREE.Vector3();
+
   private wishDir() {
     const i = this.hooks.input;
-    const f = this.forward.clone();
+    const f = this._wf.copy(this.forward);
     f.y = 0;
     f.normalize();
-    const r = this.right.clone();
+    const r = this._wr.copy(this.right);
     r.y = 0;
     r.normalize();
-    const w = new THREE.Vector3();
+    const w = this._w.set(0, 0, 0);
     w.addScaledVector(f, i.move.y);
     w.addScaledVector(r, i.move.x);
     if (w.lengthSq() > 1) w.normalize();
     return w;
   }
 
-  /** Piloting a scorestreak: the body stays put and ignores input. */
   frozen = false;
 
   update(dt: number) {
@@ -1498,8 +1385,6 @@ export class Player {
     }
     this.aiming = this.adsOn && this.weapon.def.isGun;
     this.weapon.blocking = !this.weapon.def.isGun && this.adsOn;
-    // the sight's own magnification decides which aim sensitivity applies, and
-    // it follows the blend so the change arrives with the zoom rather than before
     i.aimZoom = 1 + (82 / this.weapon.def.adsFov - 1) * this.adsBlend;
 
     if (i.pressed("slot1")) this.switchTo(0);
@@ -1515,8 +1400,6 @@ export class Player {
 
     const crouchDown = i.down("crouch");
     const hspeed = Math.hypot(this.vel.x, this.vel.z);
-    // A slide is a speed thing, not a timer: you have to be moving to start one,
-    // it bleeds off, and it ends the moment you stand up or run out of momentum.
     if (i.pressed("crouch") && this.onGround && hspeed > SLIDE_ENTRY && !this.sliding) {
       this.sliding = true;
       this.slideT = 0;
@@ -1544,7 +1427,6 @@ export class Player {
     this.wallJumpCd = Math.max(0, this.wallJumpCd - dt);
     this.mantleCd = Math.max(0, this.mantleCd - dt);
     this.landGraceT = Math.max(0, this.landGraceT - dt);
-    // a wall only counts while you are off the ground, and only for a moment
     if (this.hitWall && !this.onGround) this.wallTouch = 0;
     else this.wallTouch += dt;
 
@@ -1560,7 +1442,6 @@ export class Player {
         this.vel.y = JUMP;
         this.onGround = false;
         this.airJumps = 1;
-        // jumping out of a slide keeps the speed you built up
         if (this.sliding) {
           this.vel.x *= 1.06;
           this.vel.z *= 1.06;
@@ -1569,7 +1450,6 @@ export class Player {
         this.hooks.audio.jump();
         this.landDip.kick(-1.2);
       } else if (this.wallTouch < 0.12 && this.wallJumpCd <= 0 && this.vel.y < 7 && this.wallN) {
-        // kick off the wall: away from it, plus a push in the direction you face
         this.jumpBuf = 0;
         this.wallJumpCd = 0.35;
         const n = this.wallN;
@@ -1584,7 +1464,6 @@ export class Player {
         this.fovKick.kick(60);
         this.landDip.kick(-1.5);
       } else if (this.airJumps > 0) {
-        // second beat of height, redirected toward wherever you are steering
         this.jumpBuf = 0;
         this.airJumps -= 1;
         this.vel.y = JUMP * 0.92;
@@ -1599,7 +1478,6 @@ export class Player {
         this.landDip.kick(-1.4);
       }
     }
-    // crouch in the air is the air dash, same as the dedicated key
     if ((i.pressed("dash") || (i.pressed("crouch") && !this.onGround)) && this.dashCd <= 0) {
       const f = this.forward.clone();
       f.y = clamp(f.y, -0.15, 0.35);
@@ -1611,22 +1489,17 @@ export class Player {
       this.fovKick.kick(80);
     }
     this.dashCd = Math.max(0, this.dashCd - dt);
-    // the rope pulls and constrains before the body is integrated
     if (this.grappleEnabled) this.grapple.update(dt);
     else if (this.grapple.state !== "idle") this.grapple.detach(false);
-    // hauling yourself onto a ledge you ran into, rather than bouncing off it
     if (!this.onGround && this.mantleCd <= 0 && i.move.y > 0.3 && this.vel.y < 8 && !this.grapple.attached) {
       this.tryMantle();
     }
 
     const base = this.crouching && !this.sliding ? CROUCH : this.sprinting ? SPRINT : WALK;
-    // what you are carrying sets the pace — an LMG is not an SMG
     const speed = base * this.weapon.def.moveMul;
     if (this.onGround) {
       this.airJumps = 1;
       if (this.sliding) {
-        // a slide keeps whatever speed it started with and bleeds off slowly;
-        // steering only turns it, it can never add speed
         const sp = Math.hypot(this.vel.x, this.vel.z);
         if (sp > 0) {
           const ns = Math.max(0, sp - SLIDE_DRAG * dt) / sp;
@@ -1643,7 +1516,6 @@ export class Player {
           }
         }
       } else {
-        // landing fast buys a moment of low friction, so a run doesn't die on touchdown
         const fr = FRICTION * (this.landGraceT > 0 ? 0.25 : 1);
         const sp = Math.hypot(this.vel.x, this.vel.z);
         if (sp > 0) {
@@ -1661,7 +1533,6 @@ export class Player {
         }
       }
     } else if (wishLen > 0) {
-      // air control adds only up to a low cap, so you steer without accelerating
       const cur = this.vel.x * wish.x + this.vel.z * wish.z;
       const add = Math.min(AIR_CAP * wishLen - cur, AIR_ACCEL * dt);
       if (add > 0) {
@@ -1671,7 +1542,6 @@ export class Player {
     }
 
     const fallVel = this.vel.y;
-    // hanging on the rope takes a little of the weight off
     const col = this.hooks.world.moveAABB(this.pos, this.vel, 0.34, this.height, dt, G * (this.grapple.attached ? 0.88 : 1));
     this.hitWall = col.hitWall;
     if (col.wallNormal) this.wallN = col.wallNormal;
@@ -1692,8 +1562,6 @@ export class Player {
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw)).normalize();
 
     const spd = Math.hypot(this.vel.x, this.vel.z);
-    // footsteps land by distance covered, not on a timer, so they stay in step
-    // with the legs whether you are walking, sprinting or being dragged along
     const moving = this.onGround && spd > 0.6 && !this.sliding;
     this.bobAmt = damp(this.bobAmt, moving ? Math.min(1, spd / SPRINT) : 0, 8, dt);
     if (moving) {
@@ -1723,8 +1591,6 @@ export class Player {
     if (!this.weapon.def.isGun) {
       const w = this.weapon;
       const katana = w.def.kind === "katana";
-      // The katana chains: while a combo is live, holding the trigger keeps
-      // swinging. The switchblade is one deliberate stab per press.
       const wantSlash = katana ? firePress || (fireHeld && w.comboStep > 0) : firePress;
       if (wantSlash && canFire && !w.blocking) {
         w.fireT = w.def.interval;
@@ -1734,7 +1600,6 @@ export class Player {
         this.recoilP.kick(w.def.camKick[0] * 20);
         const heavy = this.meleeStreak >= 3;
         this.hooks.onSlash(this.eye.clone(), this.forward.clone(), w.def.damage * (heavy ? 1.8 : 1), heavy);
-        // a swing started at a sprint or in the air carries you into it
         if (katana && (this.sprinting || !this.onGround)) {
           this.vel.addScaledVector(this.forward, 5.5);
           this.fovKick.kick(45);
@@ -1750,7 +1615,6 @@ export class Player {
       const w = this.weapon;
       const burst = w.def.burst ?? 0;
       if (burst > 0) {
-        // a trigger pull commits the whole burst; the interval only applies once it is spent
         if (firePress && canFire && w.burstLeft <= 0) {
           if (w.mag <= 0) {
             if (w.beginReload()) this.hooks.audio.reload();
@@ -1782,7 +1646,6 @@ export class Player {
       this.throwNade();
     }
 
-    // anything that matters cuts an emote short
     if (this.emote && (firePress || this.aiming || this.sprinting || this.weapon.reloading || this.nadeHeld)) {
       this.cancelEmote();
     }
@@ -1871,16 +1734,11 @@ export class Player {
 
   private animateGun(dt: number) {
     const w = this.weapon;
-    // the gun eases into the shoulder at the weapon's own aim speed, so a 4x
-    // scope visibly takes longer to settle than a red dot
     this.adsBlend = damp(this.adsBlend, this.aiming ? 1 : 0, w.def.adsSpeed, dt);
     const ads = this.adsBlend;
     const sprint = this.sprinting && !this.aiming ? 1 : 0;
-    const base = new THREE.Vector3(0.22, -0.18, -0.38);
-    const aim = new THREE.Vector3(0.0, -0.14, -0.32);
     const p = w.root.position;
-    p.lerpVectors(base, aim, ads);
-    // sprinting swings the gun down and across so it reads instantly as "running"
+    p.lerpVectors(GUN_HIP, GUN_ADS, ads);
     p.x += Math.sin(this.bobPhase) * 0.012 * this.bobAmt * (1 - ads) + sprint * 0.17;
     p.y += Math.abs(Math.cos(this.bobPhase)) * 0.012 * this.bobAmt * (1 - ads) - sprint * 0.2 + this.landDip.value * 0.004;
     p.z += sprint * 0.1;
@@ -1889,7 +1747,6 @@ export class Player {
       -sprint * 0.85 + this.lookDelta.x * 0.4,
       this.lookDelta.x * -0.5 + this.recoilY.value * 0.02 + this.slideT * 0.1 + sprint * 0.35,
     );
-    // swing the new weapon up from below rather than popping it into frame
     if (w.equipT > 0) {
       const e = (w.equipT / EQUIP_DUR) ** 2;
       p.x += e * 0.14;
@@ -1911,7 +1768,6 @@ export class Player {
         w.root.rotation.y += INSPECT.rot.y;
         w.root.rotation.z += INSPECT.rot.z;
       } else {
-        // a gesture needs both hands, so the gun goes away for the duration
         const drop = Math.sin(Math.min(1, t * 6) * Math.PI * 0.5) * (t > 0.85 ? (1 - t) / 0.15 : 1);
         p.y -= drop * 0.9;
         w.root.rotation.x += drop * 1.3;
@@ -1931,3 +1787,5 @@ function lerpFov(a: number, b: number, t: number) {
 }
 
 const INSPECT = { pos: new THREE.Vector3(), rot: new THREE.Euler() };
+const GUN_HIP = new THREE.Vector3(0.22, -0.18, -0.38);
+const GUN_ADS = new THREE.Vector3(0.0, -0.14, -0.32);

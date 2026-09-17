@@ -12,9 +12,7 @@ body,
 #root {
   margin: 0;
   height: 100%;
-  /* dvh tracks the URL bar sliding away, which is what you get on a phone that
-     cannot go fullscreen; the 100% above is the fallback */
-  height: 100dvh;
+    height: 100dvh;
   overflow: hidden;
   background: var(--paper);
   font-family: "Patrick Hand", "Caveat", "Comic Sans MS", cursive;
@@ -184,8 +182,7 @@ canvas.game-canvas {
   position: absolute;
   background: var(--red);
   border-radius: 2px;
-  /* the arms ease apart as the gun climbs instead of jittering frame to frame */
-  transition:
+    transition:
     top 0.06s,
     left 0.06s;
 }
@@ -231,9 +228,6 @@ canvas.game-canvas {
   opacity: 0;
 }
 
-/* Each gun reads at a glance: a shotgun throws a wide short spread, a sniper is
-   a bare dot because the arms tell you nothing once the scope is up, and a
-   pistol sits tighter than a rifle. */
 .crosshair.ch-shotgun i {
   height: 8px;
   width: 5px;
@@ -321,8 +315,7 @@ canvas.game-canvas {
   position: absolute;
   width: 2.5px;
   height: 28px;
-  /* --hit follows the player's chosen hit colour */
-  background: var(--hit, var(--ink));
+    background: var(--hit, var(--ink));
   left: -1.25px;
   top: -14px;
 }
@@ -552,17 +545,12 @@ canvas.game-canvas {
   outline-offset: 2px;
 }
 
-/* ---- mobile HUD -------------------------------------------------------
-   The thumbs own the bottom corners, so the readouts live in the free strip
-   between them rather than underneath the stick and the fire button. */
 .m-deck {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
   bottom: calc(14px + env(safe-area-inset-bottom));
-  /* the thumb clusters take roughly 245px on the left and 235px on the right,
-     so size to what is actually left rather than to a flat fraction */
-  width: min(400px, calc(100vw - 500px));
+    width: min(400px, calc(100vw - 500px));
   min-width: 176px;
   display: flex;
   flex-direction: column;
@@ -605,8 +593,6 @@ canvas.game-canvas {
   opacity: 1;
 }
 
-/* classic stacks ammo over health; codm sets them side by side with the ammo
-   big on the right, which is what the reference layout does */
 .m-row {
   display: flex;
   flex-direction: column-reverse;
@@ -669,7 +655,6 @@ canvas.game-canvas {
   text-align: right;
 }
 
-/* the corners shrink so they clear the pause button and the score panel */
 .hud-root.touch .hud-tl,
 .hud-root.touch .hud-tr {
   font-size: 19px;
@@ -712,7 +697,6 @@ canvas.game-canvas {
   border-color: var(--red);
 }
 
-/* live score while a match is running — must never eat a click */
 .net-score {
   position: absolute;
   top: calc(10px + env(safe-area-inset-top));
@@ -760,7 +744,6 @@ canvas.game-canvas {
   width: 58px;
   height: 29px;
 }
-/* the silhouette leads, the name is a small caption under it */
 .gun-chip.withicon {
   display: inline-flex;
   flex-direction: column;
@@ -781,7 +764,6 @@ canvas.game-canvas {
 .gun-chip.withicon.on .wname {
   opacity: 1;
 }
-/* minimap sits top-right, the way every mobile shooter puts it */
 .minimap {
   position: absolute;
   top: calc(10px + env(safe-area-inset-top));
@@ -798,8 +780,6 @@ canvas.game-canvas {
   width: 84px;
   height: 84px;
 }
-/* On a phone the whole right edge is buttons, so the wave readout stacks under
-   the score on the left instead of fighting the minimap and the weapon key. */
 .hud-root.touch .hud-tr {
   top: calc(52px + env(safe-area-inset-top));
   left: 8%;
@@ -814,7 +794,6 @@ canvas.game-canvas {
   right: calc(104px + env(safe-area-inset-right));
 }
 
-/* earned scorestreaks, bottom-left above the stick */
 .streak-tray {
   position: absolute;
   left: calc(12px + env(safe-area-inset-left));
@@ -877,7 +856,6 @@ canvas.game-canvas {
   font-size: 17px;
 }
 
-/* the post-respawn kit swap, out of the way of both thumbs */
 .swap-btn {
   position: absolute;
   left: 50%;
@@ -1005,7 +983,6 @@ canvas.game-canvas {
   background: rgba(26, 48, 192, 0.18);
   transform: scale(0.96);
 }
-/* icons never swallow the pointer, so the button always owns the drag */
 .tico {
   display: block;
   width: 48%;
@@ -1149,7 +1126,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   }
 }
 
-/* ---- gunsmith ---------------------------------------------------------- */
 .gs-panel {
   margin: 10px 0 14px;
   padding: 12px 14px 16px;
@@ -1182,7 +1158,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   border-radius: 5px;
   overflow: hidden;
 }
-/* the base gun sits underneath as a hatch; the built gun paints over it */
 .stat-bar .base {
   position: absolute;
   inset: 0 auto 0 0;
@@ -1286,7 +1261,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   background: rgba(246, 243, 230, 0.6);
 }
 
-/* ---- grapple ----------------------------------------------------------- */
 .grapple-meter {
   position: absolute;
   right: 7%;
@@ -1294,7 +1268,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   width: 18px;
   opacity: 0.5;
 }
-/* it only asks for attention when the rope is out or the hook has a bite */
 .grapple-meter.on,
 .grapple-meter.aimed {
   opacity: 1;
@@ -1326,12 +1299,10 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   color: var(--green);
 }
 
-/* the skill meter shares the rope meter's slot, so it needs the same ready cue */
 .grapple-meter.aimed .fm-fill {
   background: repeating-linear-gradient(-55deg, var(--green) 0 2px, transparent 2px 5px);
 }
 
-/* ---- emote wheel -------------------------------------------------------- */
 .emote-wheel {
   position: absolute;
   inset: 0;
@@ -1443,7 +1414,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   text-align: center;
 }
 
-/* ---- night goggles ------------------------------------------------------ */
 .nvg-pip {
   position: absolute;
   left: 50%;
@@ -1478,7 +1448,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   transform: rotate(-0.6deg);
 }
 
-/* ---- rank --------------------------------------------------------------- */
 .rank-badge {
   display: inline-flex;
   flex-direction: column;
@@ -1526,7 +1495,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   background: repeating-linear-gradient(-55deg, var(--ink) 0 2px, transparent 2px 5px);
 }
 
-/* ---- chat --------------------------------------------------------------- */
 .chat-log {
   position: absolute;
   left: calc(14px + env(safe-area-inset-left));
@@ -1573,7 +1541,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   top: calc(12px + env(safe-area-inset-top));
 }
 
-/* ---- fullscreen nudge ---------------------------------------------------- */
 .fs-nudge {
   position: absolute;
   left: 50%;
@@ -1590,7 +1557,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   animation: blink 1.6s infinite;
 }
 
-/* ---- hud editor ---------------------------------------------------------- */
 .hud-editor {
   position: absolute;
   inset: 0;
@@ -1624,7 +1590,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   padding: 0 4px;
   border-radius: 4px;
 }
-/* docked at the top: on a phone every draggable piece is down at the thumbs */
 .hud-editor-bar {
   position: absolute;
   left: 50%;
@@ -1652,7 +1617,6 @@ input[type="range"].ink-range::-webkit-slider-thumb {
   font-size: 22px;
 }
 
-/* ---- kill cam ------------------------------------------------------------ */
 .killcam {
   position: absolute;
   inset: 0;

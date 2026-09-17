@@ -1,12 +1,9 @@
--- Doodle District accounts, profiles and stats.
--- Apply with:  psql "$DATABASE_URL" -f db/schema.sql   (safe to re-run)
-
 create extension if not exists pgcrypto;
 
 create table if not exists users (
   id            uuid primary key default gen_random_uuid(),
   username      text        not null,
-  -- usernames are compared case-insensitively but shown as typed
+
   username_ci   text        not null unique,
   password_hash text        not null,
   created_at    timestamptz not null default now(),
@@ -31,8 +28,6 @@ create table if not exists stats (
   updated_at    timestamptz not null default now()
 );
 
--- Only a hash of each session token is stored, so a database leak does not hand
--- out live sessions.
 create table if not exists sessions (
   token_hash text        primary key,
   user_id    uuid        not null references users(id) on delete cascade,

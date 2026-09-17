@@ -1,8 +1,3 @@
-// Other people in the match: a doodle figure in a team colour, eased between the
-// snapshots its owner sends (~20/s). It exposes the same head and centre spheres
-// the hitscan uses for enemies, so shooting a person and shooting a bot go down
-// one path. Authority is split in match.ts.
-
 import * as THREE from "three";
 import { humanoid, TYPES, type BodyParts, type TypeDef } from "./enemies";
 import { INK, makeInkMaterial } from "./renderer";
@@ -10,7 +5,6 @@ import { clamp, damp, rand } from "./math";
 import { EMOTES, armPose, emoteFromIndex, emoteIndex, type EmoteKind } from "./emotes";
 import { kindId, kindFromId, type WeaponKind } from "./player";
 
-/** Anything a bullet can find that is not an Enemy. */
 export interface NetTarget {
   id: string;
   alive: boolean;
@@ -18,16 +12,13 @@ export interface NetTarget {
   center: THREE.Vector3;
   scale: number;
   ink: number;
-  /** which way they are facing — an execution has to come from behind */
   forward: THREE.Vector3;
-  /** play the finisher on this body, if it is one that can */
   execute?: () => void;
 }
 
 export const TEAM_INKS = [INK.BLUE, INK.RED] as const;
 export const FFA_INK = INK.RED;
 
-/** flags packed into one snapshot int */
 const F_CROUCH = 1;
 const F_SLIDE = 2;
 const F_BLOCK = 4;
@@ -49,15 +40,12 @@ export interface LocalSnapshotSource {
   sliding: boolean;
   onGround: boolean;
   aiming: boolean;
-  /** what they are actually holding, not which slot it sits in */
   weaponKind: WeaponKind;
   weapon: { blocking: boolean };
-  /** bots never emote, so this is optional on the wire */
   emote?: EmoteKind | null;
 }
 
-/** What a player broadcasts about itself, kept small: 12 numbers. */
-export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
+export function encodeLocal(p: LocalSnapshotSource, firing: boolean, out: Snapshot = []): Snapshot {
   const flags =
     (p.crouching ? F_CROUCH : 0) |
     (p.sliding ? F_SLIDE : 0) |
@@ -66,27 +54,25 @@ export function encodeLocal(p: LocalSnapshotSource, firing: boolean): Snapshot {
     (p.onGround ? F_GROUND : 0) |
     (firing ? F_FIRING : 0) |
     (p.alive ? F_ALIVE : 0);
-  return [
-    +p.pos.x.toFixed(2),
-    +p.pos.y.toFixed(2),
-    +p.pos.z.toFixed(2),
-    +p.yaw.toFixed(2),
-    +p.pitch.toFixed(2),
-    kindId(p.weaponKind),
-    flags,
-    Math.round(p.hp),
-    +p.vel.x.toFixed(1),
-    +p.vel.y.toFixed(1),
-    +p.vel.z.toFixed(1),
-    emoteIndex(p.emote ?? null),
-  ];
+  out[0] = Math.round(p.pos.x * 100) / 100;
+  out[1] = Math.round(p.pos.y * 100) / 100;
+  out[2] = Math.round(p.pos.z * 100) / 100;
+  out[3] = Math.round(p.yaw * 100) / 100;
+  out[4] = Math.round(p.pitch * 100) / 100;
+  out[5] = kindId(p.weaponKind);
+  out[6] = flags;
+  out[7] = Math.round(p.hp);
+  out[8] = Math.round(p.vel.x * 10) / 10;
+  out[9] = Math.round(p.vel.y * 10) / 10;
+  out[10] = Math.round(p.vel.z * 10) / 10;
+  out[11] = emoteIndex(p.emote ?? null);
+  out.length = 12;
+  return out;
 }
 
-/** Render this far behind real time so there is always a pair to interpolate between. */
 const INTERP_DELAY = 0.08;
 const STAND_H = 1.72;
 const CROUCH_H = 1.08;
-/** How long the finisher owns the body for. */
 const SNAP_DUR = 0.85;
 
 function shortestAngle(a: number, b: number) {
@@ -96,13 +82,6 @@ function shortestAngle(a: number, b: number) {
   return d;
 }
 
-/**
- * The gun in someone else's hands. Not the first-person model — that one carries
- * camos, charms and a working bolt, and ten of them would be ten times the
- * geometry for something the size of a thumbnail at across-the-map range. This
- * is the silhouette: enough to read what they are carrying and which way it
- * points.
- */
 const PROPS: Record<string, { len: number; thick: number; mag: number; stock: boolean; scope: number; bore: number }> = {
   rifle: { len: 0.58, thick: 0.09, mag: 0.17, stock: true, scope: 0, bore: 0.3 },
   carbine: { len: 0.46, thick: 0.09, mag: 0.15, stock: true, scope: 0, bore: 0.22 },
@@ -212,23 +191,20 @@ export class RemotePlayer implements NetTarget {
   parts: BodyParts;
   private scene: THREE.Scene;
   private tag: THREE.Sprite | null;
-  private snapA: { p: THREE.Vector3; yaw: number; pitch: number; t: number } | null = null;
-  private snapB: { p: THREE.Vector3; yaw: number; pitch: number; t: number } | null = null;
+  private snapA = { p: new THREE.Vector3(), yaw: 0, pitch: 0, t: 0 };
+  private snapB = { p: new THREE.Vector3(), yaw: 0, pitch: 0, t: 0 };
+  private _want = new THREE.Vector3();
   private phase = 0;
   private walk = 0;
   private visible = false;
-  /** which way this body happens to fall, picked once per death */
   private topple = 0;
   private limp = 0;
-  /** counts down through the neck snap; the body cannot fall until it is done */
   private snapT = 0;
 
-  /** Taken from behind at contact range. The head goes first, then the body. */
   execute() {
     this.snapT = SNAP_DUR;
     this.topple = 0;
   }
-  /** the right hand, oriented so a prop's +Z runs down the arm and out the muzzle */
   private hand: THREE.Group;
   private prop: THREE.Object3D | null = null;
 
@@ -265,12 +241,18 @@ export class RemotePlayer implements NetTarget {
     if (this.prop) this.hand.add(this.prop);
   }
 
-  /** Feed a snapshot from this player's owner. */
   push(snap: Snapshot, now: number) {
     if (!snap || snap.length < 8) return;
-    const p = new THREE.Vector3(snap[0], snap[1], snap[2]);
-    this.snapA = this.snapB || { p: p.clone(), yaw: snap[3], pitch: snap[4], t: now - 0.07 };
-    this.snapB = { p, yaw: snap[3], pitch: snap[4], t: now };
+    const a = this.snapA;
+    const b = this.snapB;
+    a.p.copy(b.p);
+    a.yaw = b.yaw;
+    a.pitch = b.pitch;
+    a.t = b.t;
+    b.p.set(snap[0], snap[1], snap[2]);
+    b.yaw = snap[3];
+    b.pitch = snap[4];
+    b.t = now;
 
     this.setWeapon(kindFromId(snap[5]));
     const f = snap[6];
@@ -291,28 +273,27 @@ export class RemotePlayer implements NetTarget {
       this.emoteT = 0;
     }
 
-    // first snapshot, or coming back from the dead: snap rather than glide in
     if (!this.visible) {
-      this.pos.copy(p);
+      this.pos.copy(b.p);
+      a.p.copy(b.p);
+      a.yaw = b.yaw;
+      a.pitch = b.pitch;
+      a.t = b.t;
       this.visible = true;
       this.parts.root.visible = true;
-      this.snapA = null;
     }
     this.lastSeen = now;
   }
 
   update(dt: number, now: number) {
-    if (this.snapB) {
-      const A = this.snapA || this.snapB;
+    if (this.visible) {
+      const A = this.snapA;
       const span = Math.max(0.02, this.snapB.t - A.t);
       const tt = now - INTERP_DELAY;
       const k = clamp((tt - A.t) / span, 0, 1);
-      const want = new THREE.Vector3().lerpVectors(A.p, this.snapB.p, k);
-      // if we have run past the newest snapshot, carry on along their velocity
+      const want = this._want.lerpVectors(A.p, this.snapB.p, k);
       const late = tt - this.snapB.t;
       if (late > 0) want.addScaledVector(this.vel, Math.min(late, 0.35));
-      // a big gap means a teleport or a respawn, not a stutter — and a body that
-      // has respawned is done being executed
       if (want.distanceToSquared(this.pos) > 36) {
         this.pos.copy(want);
         this.snapT = 0;
@@ -350,12 +331,7 @@ export class RemotePlayer implements NetTarget {
     P.eyes.visible = this.alive && this.snapT <= 0;
     P.xeyes.visible = !this.alive || this.snapT > 0;
 
-    // The finisher outranks everything, including a stale snapshot still
-    // claiming this body is upright — the owner has not caught up yet, and the
-    // one who did it should not watch the neck un-snap.
     if (this.snapT > 0) {
-      // The head wrenches round first and holds there, and only once it has does
-      // the body remember to fall. Both at once just looks like any other death.
       this.snapT = Math.max(0, this.snapT - dt);
       const t = 1 - this.snapT / SNAP_DUR;
       const turn = Math.min(1, t * 4);
@@ -370,7 +346,6 @@ export class RemotePlayer implements NetTarget {
     }
 
     if (!this.alive) {
-      // topple rather than slump: pick a direction once, then go limp
       if (this.topple === 0) this.topple = rand(0.35, 1) * (Math.random() < 0.5 ? -1 : 1);
       this.limp = damp(this.limp, 1, 7, dt);
       P.root.rotation.x = damp(P.root.rotation.x, Math.PI / 2.1, 7, dt);
@@ -399,7 +374,6 @@ export class RemotePlayer implements NetTarget {
       P.lleg.rotation.x = -0.5;
       P.rleg.rotation.x = 0.6;
     }
-    // an emote owns the arms outright; the same pose the emoter is playing
     if (this.emote && EMOTES[this.emote] && !EMOTES[this.emote].holdsWeapon) {
       this.emoteT += dt;
       const def = EMOTES[this.emote];
@@ -416,7 +390,6 @@ export class RemotePlayer implements NetTarget {
     }
     P.head.rotation.z = damp(P.head.rotation.z, 0, 10, dt);
 
-    // guns come up and forward; the blade hangs until it is raised to guard
     const aim = this.aiming ? 1 : 0.9;
     const look = clamp(this.pitch, -1.1, 1.1);
     P.rarm.rotation.x = damp(P.rarm.rotation.x, (-1.35 - look * 0.85) * aim - s * 0.6 * w * (1 - aim), 14, dt);

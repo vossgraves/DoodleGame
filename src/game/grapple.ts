@@ -5,16 +5,6 @@ import { clamp } from "./math";
 import type { AudioSys } from "./audio";
 import type { Input } from "./input";
 
-/**
- * The swing grapple. Fire it at whatever the crosshair is on, and while it is
- * attached you are on a rope: the anchor pulls you in, the length constrains
- * you, and holding forward under the anchor pumps the swing the way a child
- * pumps a playground swing. Letting go with jump throws you off it.
- *
- * It runs on breath rather than a cooldown — hanging drains it, feet on the
- * ground bring it back — so it is a movement tool you spend, not a free ride.
- */
-
 const STAM_FIRE = 0.09;
 const STAM_DRAIN = 0.08;
 const STAM_GROUND = 0.4;
@@ -25,11 +15,9 @@ const MAX_RANGE = 75;
 
 export type GrappleState = "idle" | "fly" | "on";
 
-/** Something worth hooking that is not a wall — an enemy or another player. */
 export interface GrappleTarget {
   center: THREE.Vector3;
   alive: boolean;
-  /** drag it toward the player instead of dragging the player toward it */
   yank?: (toward: THREE.Vector3) => void;
 }
 
@@ -55,9 +43,7 @@ export interface GrappleHooks {
 
 export class Grapple {
   state: GrappleState = "idle";
-  /** 0..1 breath left; firing costs some and hanging drains it */
   stamina = 1;
-  /** true when the crosshair is on something hookable */
   hasTarget = false;
 
   private hooks: GrappleHooks;
@@ -82,7 +68,7 @@ export class Grapple {
     this.hooks = hooks;
     const ink = makeInkMaterial({ ink: INK.BLACK, shadeBias: -0.3 });
     const geo = new THREE.CylinderGeometry(0.012, 0.012, 1, 5);
-    geo.translate(0, 0.5, 0); // grow from the hand end, so scaling stretches it
+    geo.translate(0, 0.5, 0);
     this.rope = new THREE.Mesh(geo, ink);
     this.rope.visible = false;
     this.rope.frustumCulled = false;
@@ -99,7 +85,6 @@ export class Grapple {
     return this.state === "on";
   }
 
-  /** Where the rope leaves your body. */
   private handPos(out: THREE.Vector3) {
     const h = this.hooks;
     out.copy(h.eye()).addScaledVector(h.right(), -0.55).addScaledVector(h.forward(), 0.9);
@@ -107,11 +92,6 @@ export class Grapple {
     return out;
   }
 
-  /**
-   * What the crosshair is on wins. Enemies get a small amount of assist and
-   * only when they are genuinely near the aim line and in front of whatever you
-   * are pointing at, so the hook never jumps to something you never aimed at.
-   */
   private findTarget(): { point: THREE.Vector3; enemy: GrappleTarget | null; dist: number } | null {
     const h = this.hooks;
     const o = h.eye();
@@ -129,7 +109,7 @@ export class Grapple {
       const along = v.dot(d);
       if (along < 1.5 || along > Math.min(45, wallDist + 1.5)) continue;
       const lat = Math.sqrt(Math.max(0, v.lengthSq() - along * along));
-      const tol = 1.1 + along * 0.06; // a few degrees of help, no more
+      const tol = 1.1 + along * 0.06;
       if (lat > tol || lat >= bestLat) continue;
       if (!h.world.hasLineOfSight(o, t.center)) continue;
       best = t;
@@ -169,7 +149,6 @@ export class Grapple {
     h.input.rumble(0.15, 0.4, 40);
   }
 
-  /** Let go. `boost` is the throw you get for releasing with jump. */
   detach(boost: boolean) {
     if (this.state === "idle") return;
     const was = this.state;
@@ -199,7 +178,6 @@ export class Grapple {
 
     if (this.state === "idle") {
       if (inp.pressed("grapple") && this.cd <= 0) this.fire();
-      // only re-scan a few times a second: this is a raycast plus a target sweep
       this.scanT += dt;
       if (this.scanT > 0.08) {
         this.scanT = 0;
@@ -211,7 +189,6 @@ export class Grapple {
       this.hookPos.lerpVectors(this.from, this.anchor, f);
       if (f >= 1) {
         if (this.enemy) {
-          // hooking a body pulls it to you rather than you to it
           if (this.enemy.alive) {
             this.enemy.yank?.(h.center());
             h.audio.grappleHit();
@@ -258,7 +235,6 @@ export class Grapple {
       if (vAlong < 22) vel.addScaledVector(d, 42 * dt);
     } else {
       if (vAlong < 6) vel.addScaledVector(d, 3 * dt);
-      // pumping the swing: holding forward while below the anchor adds energy
       if (h.moveY() > 0.3 && c.y < this.anchor.y - 1) {
         const f = h.forward().clone();
         f.y = 0;
@@ -266,7 +242,6 @@ export class Grapple {
       }
     }
 
-    // the rope is inextensible: kill outward velocity and pull the slack in
     if (dist > this.len) {
       const vn = vel.dot(d);
       if (vn < 0) vel.addScaledVector(d, -vn);
@@ -280,7 +255,6 @@ export class Grapple {
       h.leaveGround();
     }
 
-    // a rope through a wall is not a rope; give it a moment before dropping you
     this.losT += dt;
     if (this.losT > 0.15) {
       this.losT = 0;

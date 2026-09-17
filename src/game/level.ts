@@ -3,7 +3,6 @@ import { World } from "./physics";
 import { INK, makeInkMaterial, type PaperStyle } from "./renderer";
 import { rand } from "./math";
 
-/** district/zombies are the PvE wave modes; arena is player-vs-player. */
 export type Mode = "district" | "zombies" | "arena";
 
 export interface Level {
@@ -21,10 +20,8 @@ export interface MapDef {
   key: string;
   name: string;
   blurb: string;
-  /** arena half-extent; the perimeter wall sits here */
   half: number;
   playerStart: [number, number];
-  /** the stationery this map is drawn on; nothing means the district's */
   style?: PaperStyle;
   build: (k: MapKit) => void;
 }
@@ -46,13 +43,6 @@ function jitterGeo(g: THREE.BufferGeometry, amt: number) {
   g.computeVertexNormals();
 }
 
-/**
- * Shared drawing kit every map builds through. It owns the material cache and the
- * accumulating mesh/spawn lists so a map body reads as pure layout.
- *
- * Spawn points are collected as raw x/z pairs and resolved to ground height after
- * the map finishes building — groundY() is only meaningful once the geometry exists.
- */
 export class MapKit {
   scene: THREE.Scene;
   world: World;
@@ -93,7 +83,6 @@ export class MapKit {
     return this.add(m);
   }
 
-  /** Axis-aligned block. y is the *base*, not the centre. */
   box(cx: number, y: number, cz: number, w: number, h: number, d: number, o: BoxOpts = {}) {
     const g = new THREE.BoxGeometry(w, h, d);
     if (o.jitter !== 0) jitterGeo(g, o.jitter ?? 0.02);
@@ -104,7 +93,6 @@ export class MapKit {
     return m;
   }
 
-  /** Ground slab plus the four perimeter walls. */
   arena(half: number, wallH = 16) {
     const P = half;
     this.world.bounds = { minX: -P + 1, maxX: P - 1, minZ: -P + 1, maxZ: P - 1 };
@@ -145,7 +133,6 @@ export class MapKit {
     }
   }
 
-  /** Block with windows on all four faces and a coloured roof lip. */
   building(x: number, z: number, w: number, h: number, d: number) {
     this.box(x, 0, z, w, h, d, { ink: this.inkWall });
     const floors = Math.floor(h / 3);
@@ -213,7 +200,6 @@ export class MapKit {
     this.world.addBox(x, 0, z, 3.4, 1.5, 1.7);
   }
 
-  /** Flat walkable slab — rooftop decks, catwalks, plank bridges. */
   deck(x: number, y: number, z: number, w: number, d: number, ink = this.inkAccent) {
     this.box(x, y, z, w, 0.3, d, { ink });
   }
@@ -228,12 +214,10 @@ export class MapKit {
     this.pickups.push(new THREE.Vector3(x, y, z));
   }
 
-  /** Register a mesh that moves every frame. */
   float(mesh: THREE.Object3D, update: (t: number) => void) {
     this.animated.push({ mesh, update });
   }
 
-  /** Paper planes circling overhead — shared ambient dressing. */
   planes(count = 4, baseR = 18) {
     for (let i = 0; i < count; i++) {
       const g = new THREE.ConeGeometry(0.7, 2.2, 3);
@@ -252,10 +236,6 @@ export class MapKit {
     }
   }
 }
-
-// ---------------------------------------------------------------------------
-// maps
-// ---------------------------------------------------------------------------
 
 const district: MapDef = {
   key: "district",
@@ -319,7 +299,6 @@ const district: MapDef = {
     k.stairs(18, 12, -1, "x", 9);
     k.deck(13.2, 2.88, 12, 4, 5, k.inkWall);
 
-    // plaza fountain
     const fountain = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.6, 0.6, 10), k.mat(k.inkAccent));
     fountain.position.set(0, 0.3, 0);
     k.add(fountain);
@@ -430,8 +409,6 @@ const rooftops: MapDef = {
   build: (k) => {
     k.arena(38, 20);
 
-    // Four corner towers of equal height so one ring of bridges links them all.
-    // The map reads as hub-and-spokes: spire in the middle, ring around the edge.
     const TOWER_H = 12;
     for (const [x, z] of [
       [-22, -22],
@@ -449,13 +426,11 @@ const rooftops: MapDef = {
         k.box(x + ox, TOWER_H + 0.35, z + oz, pw, 1.1, pd, { ink: k.inkAccent });
     }
 
-    // ring of plank bridges joining the four roofs
     k.deck(0, TOWER_H, -22, 31, 3.2, k.inkWall);
     k.deck(0, TOWER_H, 22, 31, 3.2, k.inkWall);
     k.deck(-22, TOWER_H, 0, 3.2, 31, k.inkWall);
     k.deck(22, TOWER_H, 0, 3.2, 31, k.inkWall);
 
-    // central spire — the thing you see from anywhere, and the fight everyone wants
     k.box(0, 0, 0, 9, 6, 9, { ink: k.inkWall });
     k.deck(0, 6, 0, 10, 10, k.inkAccent);
     for (const [ox, oz, pw, pd] of [
@@ -467,7 +442,6 @@ const rooftops: MapDef = {
       k.box(ox, 6.3, oz, pw, 0.9, pd, { ink: k.inkWall });
     k.box(0, 6, 0, 3, 10, 3, { ink: k.inkAccent });
 
-    // decks spiralling the shaft, spaced under a jump height apart
     const ring: [number, number][] = [
       [3.2, 0],
       [0, 3.2],
@@ -480,7 +454,6 @@ const rooftops: MapDef = {
     }
     k.deck(0, 15.8, 0, 5.5, 5.5, k.inkAccent);
 
-    // stairs: ground to the spire deck, and two long runs up to the bridge ring
     k.stairs(0, -14, 1, "z", 15, 0.4, 0.5, 3);
     k.deck(0, 5.9, -5.6, 3, 2.6, k.inkWall);
     k.stairs(-30, -8, 1, "z", 24, 0.5, 0.55, 3);
@@ -488,7 +461,6 @@ const rooftops: MapDef = {
     k.stairs(30, 8, -1, "z", 24, 0.5, 0.55, 3);
     k.deck(26, TOWER_H, -5.2, 8.5, 3.2, k.inkWall);
 
-    // street-level cover so the ground floor is not a bare plane
     for (const [x, z, w, d] of [
       [-12, -6, 6, 1.3],
       [12, 6, 6, 1.3],
@@ -564,13 +536,11 @@ const schoolyard: MapDef = {
   build: (k) => {
     k.arena(36, 9);
 
-    // the school block along one edge, with a covered walkway
     k.building(0, -28, 34, 9, 10);
     k.deck(0, 4.2, -20, 32, 3);
     for (let i = -14; i <= 14; i += 7) k.box(i, 0, -20, 0.5, 4.2, 0.5, { ink: INK.BLACK, noShoot: true });
     k.stairs(-17, -18, 1, "x", 11, 0.38, 0.5, 3);
 
-    // climbing frame: an open lattice you can shoot through and stand on
     const frame = (cx: number, cz: number) => {
       for (const ox of [-3, 3])
         for (const oz of [-3, 3]) k.box(cx + ox, 0, cz + oz, 0.4, 4.2, 0.4, { ink: k.inkAccent });
@@ -582,7 +552,6 @@ const schoolyard: MapDef = {
     frame(-16, 6);
     frame(16, 6);
 
-    // sandbox pit and benches
     for (const [x, z, w, d] of [
       [0, 14, 9, 9],
       [-22, -6, 6, 6],
@@ -615,7 +584,6 @@ const schoolyard: MapDef = {
       k.world.addBox(x, 0, z, rot ? 1.1 : 3.4, 1.9, rot ? 3.4 : 1.1);
     }
 
-    // basketball hoops as tall landmarks
     for (const [x, z, s] of [
       [-28, 24, 1],
       [28, 24, -1],
@@ -628,7 +596,6 @@ const schoolyard: MapDef = {
       k.add(hoop);
     }
 
-    // scattered low cover so the open tarmac is survivable
     for (const [x, z, w, d] of [
       [-6, 0, 5, 1.2],
       [6, 0, 5, 1.2],
@@ -691,25 +658,18 @@ const subway: MapDef = {
   build: (k) => {
     k.arena(34, 12);
 
-    // ceiling slab makes it read as underground and blocks the sky
     k.box(0, 9, 0, 70, 1, 70, { ink: k.inkWall, noShoot: true });
 
-    // the track trench down the middle, with two raised platforms either side
     k.box(0, -0.6, 0, 12, 0.4, 62, { ink: INK.BLACK, fill: k.night });
     for (const s of [-1, 1]) {
       k.box(s * 13.5, 0, 0, 15, 1.2, 62, { ink: k.inkWall });
-      // platform edge stripe
       k.box(s * 6.6, 1.2, 0, 0.6, 0.12, 62, { ink: k.inkAccent, noCollide: true });
-      // pillar rows
       for (let z = -26; z <= 26; z += 6.5) k.box(s * 13.5, 1.2, z, 1.1, 6.6, 1.1, { ink: k.inkAccent });
-      // benches / vending along the back wall
       for (let z = -22; z <= 22; z += 11) k.box(s * 19.5, 1.2, z, 1.4, 1.5, 3.2, { ink: k.inkWall });
     }
 
-    // rails
     for (const x of [-3.2, 3.2]) k.box(x, -0.6, 0, 0.28, 0.24, 62, { ink: k.inkAccent, noCollide: true });
 
-    // three stopped carriages in the trench — cover, and a route between platforms
     for (const cz of [-20, 0, 20]) {
       k.box(0, -0.2, cz, 9, 3.4, 13, { ink: k.night ? INK.RED : INK.BLUE });
       k.deck(0, 3.2, cz, 9.4, 13.4, k.inkAccent);
@@ -722,13 +682,11 @@ const subway: MapDef = {
           });
     }
 
-    // ramps from platform up onto the carriage roofs
     for (const s of [-1, 1]) {
       k.stairs(s * 7.6, -28, 1, "z", 7, 0.32, 0.55, 2.4);
       k.stairs(s * 7.6, 28, -1, "z", 7, 0.32, 0.55, 2.4);
     }
 
-    // mezzanine stairwells at both ends
     for (const s of [-1, 1]) {
       k.stairs(s * 26, -12, 1, "z", 12, 0.4, 0.5, 3.4);
       k.deck(s * 26, 4.8, -2, 7, 12, k.inkWall);
@@ -774,24 +732,19 @@ const sketchpad: MapDef = {
   build: (k) => {
     k.arena(34, 26);
 
-    // a low ground exists so a missed jump costs tempo, not the run
-    // slabs climb in three tiers around a tall centre island
     const slab = (x: number, y: number, z: number, w: number, d: number, ink = k.inkWall) => {
       k.box(x, y, z, w, 0.5, d, { ink });
       k.box(x, y + 0.5, z, w + 0.3, 0.18, d + 0.3, { ink: k.inkAccent, noCollide: true });
     };
 
-    // tier 1
     slab(-16, 2.4, -16, 9, 9);
     slab(16, 2.4, -16, 9, 9);
     slab(-16, 2.4, 16, 9, 9);
     slab(16, 2.4, 16, 9, 9);
-    // tier 2
     slab(0, 5.2, -20, 11, 7);
     slab(0, 5.2, 20, 11, 7);
     slab(-20, 5.2, 0, 7, 11);
     slab(20, 5.2, 0, 7, 11);
-    // tier 3 — centre island, the contested ground
     slab(0, 8.6, 0, 13, 13, k.inkAccent);
     for (const [ox, oz, w, d] of [
       [0, -6.5, 13, 0.4],
@@ -801,7 +754,6 @@ const sketchpad: MapDef = {
     ] as [number, number, number, number][])
       k.box(ox, 9.1, oz, w, 0.9, d, { ink: k.inkWall });
 
-    // stepping stones bridging the tiers, small enough to demand a real jump
     for (const [x, y, z] of [
       [-8, 3.8, -8],
       [8, 3.8, -8],
@@ -816,13 +768,11 @@ const sketchpad: MapDef = {
     ] as [number, number, number][])
       slab(x, y, z, 3.4, 3.4);
 
-    // ramps up from the floor so a death is recoverable without a jump puzzle
     k.stairs(-26, -6, 1, "z", 8, 0.32, 0.55, 3);
     k.stairs(26, 6, -1, "z", 8, 0.32, 0.55, 3);
     slab(-26, 2.4, 0, 5, 6);
     slab(26, 2.4, 0, 5, 6);
 
-    // pencils standing in the void as landmarks / partial cover
     for (const [x, z, h] of [
       [-11, 0, 9],
       [11, 0, 9],
@@ -835,7 +785,6 @@ const sketchpad: MapDef = {
       k.add(tip);
     }
 
-    // drifting eraser crumbs
     for (let i = 0; i < 5; i++) {
       const m = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.5), k.mat(k.inkAccent));
       k.add(m);
@@ -885,7 +834,6 @@ const bazaar: MapDef = {
   build: (k) => {
     k.arena(32, 14);
 
-    // a grid of market stalls: solid counter, walkable awning above
     const stall = (x: number, z: number, rot: 0 | 1) => {
       const w = rot ? 3.2 : 6.4;
       const d = rot ? 6.4 : 3.2;
@@ -898,7 +846,6 @@ const bazaar: MapDef = {
       ] as [number, number][])
         k.box(x + ox, 1.35, z + oz, 0.28, 1.9, 0.28, { ink: INK.BLACK, noShoot: true });
       k.deck(x, 3.25, z, w + 0.8, d + 0.8, k.inkAccent);
-      // hanging cloth
       k.box(x, 1.5, z + (rot ? 0 : d / 2), rot ? 0.12 : w * 0.8, 1.0, rot ? d * 0.8 : 0.12, {
         ink: k.night ? INK.RED : INK.ORANGE,
         noCollide: true,
@@ -922,7 +869,6 @@ const bazaar: MapDef = {
     ] as [number, number, 0 | 1][])
       stall(x, z, r);
 
-    // central plaza with a well, the one open sightline
     const well = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.6, 1.4, 12), k.mat(k.inkAccent));
     well.position.set(0, 0.7, 0);
     k.add(well);
@@ -930,7 +876,6 @@ const bazaar: MapDef = {
     for (const s of [-1, 1]) k.box(s * 2.2, 1.4, 0, 0.3, 3, 0.3, { ink: INK.BLACK, noShoot: true });
     k.box(0, 4.4, 0, 5.4, 0.4, 1.6, { ink: k.inkWall, noCollide: true });
 
-    // crate piles filling the alleys
     for (const [x, z] of [
       [-13, -6],
       [-12.2, -5.4],
@@ -955,7 +900,6 @@ const bazaar: MapDef = {
     ] as [number, number][])
       k.barrel(x, z);
 
-    // a raised terrace along one wall, reached by stairs at both ends
     k.deck(0, 4.6, -27, 56, 6, k.inkWall);
     k.box(0, 4.6, -24.2, 56, 1.0, 0.4, { ink: k.inkAccent });
     k.stairs(-27, -22, -1, "z", 13, 0.36, 0.5, 3.2);
@@ -999,12 +943,6 @@ const bazaar: MapDef = {
   },
 };
 
-/**
- * A prison island: one long cell block on the rock, with a harbour, a chemical
- * plant, a headquarters and a lighthouse ringed around it, and the water at the
- * arena wall. Built compact and vertical, so a battle royale circle always has
- * two ways in and something to climb.
- */
 const island: MapDef = {
   key: "island",
   name: "PEN ISLAND",
@@ -1014,8 +952,6 @@ const island: MapDef = {
   build: (k) => {
     k.arena(40, 18);
 
-    // The water. It sits a hair above the floor rather than below it, or the
-    // ground plane hides it completely and the island stops reading as one.
     for (const [x, z, w, d] of [
       [0, 37, 80, 8],
       [0, -37, 80, 8],
@@ -1024,7 +960,6 @@ const island: MapDef = {
     ] as [number, number, number, number][]) {
       k.box(x, 0.02, z, w, 0.06, d, { ink: INK.BLUE, noCollide: true, fill: true });
     }
-    // a scribbled shoreline so the edge is not a hard rectangle
     for (let i = 0; i < 44; i++) {
       const a = (i / 44) * Math.PI * 2;
       const r = 33.5 + Math.sin(i * 2.3) * 1.6;
@@ -1034,7 +969,6 @@ const island: MapDef = {
       });
     }
 
-    // ---- the cell block, dead centre and the reason anyone comes here -------
     const cellW = 34;
     const cellD = 12;
     k.box(0, 0, 0, cellW, 4.2, cellD, { ink: k.inkWall });
@@ -1043,17 +977,14 @@ const island: MapDef = {
     k.deck(0, 8.2, 0, cellW - 2, cellD - 2, k.inkAccent);
     k.windowRow(0, 0, cellW, cellD, 2, "z", 1);
     k.windowRow(0, 0, cellW, cellD, 2, "z", -1);
-    // the cell rows themselves: a colonnade you can weave through at ground level
     for (let i = -5; i <= 5; i++) {
       if (i === 0) continue;
       k.box(i * 3, 0, -cellD / 2 - 1.6, 0.5, 3.4, 3.2, { ink: INK.BLACK });
       k.box(i * 3, 0, cellD / 2 + 1.6, 0.5, 3.4, 3.2, { ink: INK.BLACK });
     }
-    // stairs up each end, so the roof is a fight rather than a camp
     k.stairs(-cellW / 2 - 3, -6, 1, "x", 12, 0.36, 0.5, 3);
     k.stairs(cellW / 2 + 3, 6, -1, "x", 12, 0.36, 0.5, 3);
 
-    // ---- harbour, south-west: containers and a jetty ------------------------
     const container = (x: number, z: number, rot: 0 | 1, stack = 1) => {
       const w = rot ? 3.2 : 8;
       const d = rot ? 8 : 3.2;
@@ -1068,26 +999,22 @@ const island: MapDef = {
     container(-33, 24, 0, 1);
     k.deck(-24, 8.8, 18, 12, 10, k.inkAccent);
     k.stairs(-14, 20, -1, "x", 12, 0.42, 0.5, 2.6);
-    // the jetty, out over the water
     k.box(-24, 0, 33, 6, 0.8, 14, { ink: k.inkWall });
     for (const z of [29, 33, 37]) {
       k.box(-27, 0.8, z, 0.4, 1.6, 0.4, { ink: INK.BLACK, noShoot: true });
       k.box(-21, 0.8, z, 0.4, 1.6, 0.4, { ink: INK.BLACK, noShoot: true });
     }
 
-    // ---- chemical plant, north-east: tanks and pipework ---------------------
     const tank = (x: number, z: number, r: number, h: number) => {
       const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 12), k.mat(k.inkWall));
       m.position.set(x, h / 2, z);
       k.add(m);
       k.world.addBox(x, 0, z, r * 1.8, h, r * 1.8);
-      // a ring band, so the tanks read as tanks and not as pillars
       k.box(x, h * 0.6, z, r * 1.95, 0.35, r * 1.95, { ink: k.inkAccent, noCollide: true });
     };
     tank(22, -20, 3.4, 8);
     tank(30, -14, 2.6, 6);
     tank(20, -29, 2.4, 5.5);
-    // catwalk between the tanks
     k.deck(25, 6.2, -18, 14, 3, k.inkAccent);
     k.box(25, 6.2, -16.4, 14, 1.0, 0.3, { ink: k.inkAccent });
     k.stairs(16, -18, 1, "x", 17, 0.37, 0.42, 2.4);
@@ -1098,13 +1025,11 @@ const island: MapDef = {
     ] as [number, number][])
       k.barrel(x, z, 1.6);
 
-    // ---- headquarters, north-west -------------------------------------------
     k.building(-24, -22, 14, 12, 12);
     k.deck(-24, 12, -22, 16, 14, k.inkAccent);
     k.stairs(-14, -22, -1, "x", 14, 0.5, 0.5, 3);
     k.box(-24, 0, -14, 10, 3.2, 0.6, { ink: k.inkWall });
 
-    // ---- lighthouse on the east point ----------------------------------------
     const light = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 3.2, 16, 10), k.mat(k.inkWall));
     light.position.set(32, 8, 14);
     k.add(light);
@@ -1114,7 +1039,6 @@ const island: MapDef = {
     k.stairs(26, 14, 1, "x", 10, 0.5, 0.5, 2.4);
     k.deck(28, 5, 14, 6, 5, k.inkAccent);
 
-    // ---- construction, south-east: open scaffolding --------------------------
     for (let f = 0; f < 3; f++) {
       k.deck(22, 3.4 + f * 3.4, 24, 14, 12, f % 2 ? k.inkAccent : k.inkWall);
       for (const [ox, oz] of [
@@ -1127,7 +1051,6 @@ const island: MapDef = {
       k.stairs(f % 2 ? 15.5 : 28.5, 24, f % 2 ? 1 : -1, "x", 10, 0.34, 0.42, 2.2);
     }
 
-    // ---- the rock: cover scattered along the paths between all of it ---------
     for (const [x, z, w, h, d] of [
       [-10, 18, 5, 1.3, 1.4],
       [9, 17, 4, 1.2, 1.5],
@@ -1198,15 +1121,6 @@ const island: MapDef = {
   },
 };
 
-/**
- * The one map not drawn in a school exercise book. Felt tip on a field
- * notebook: warm paper, a green grid, sepia where the district has graphite,
- * and a teal that reads as water rather than biro.
- *
- * It plays vertically. Every canopy is a floor you can stand on and every trunk
- * is climbable, so the fight moves up into the branches and back down through
- * the temple rather than around one street.
- */
 const jungle: MapDef = {
   key: "jungle",
   name: "DOODLE JUNGLE",
@@ -1228,9 +1142,6 @@ const jungle: MapDef = {
   build: (k) => {
     k.arena(40, 20);
 
-    // ---- the river, cut across the map on a lazy diagonal -------------------
-    // A curve rather than a straight channel, so neither half of the map is a
-    // clean firing line down it.
     const riverX = (z: number) => -6 + z * 0.34 + Math.sin(z * 0.09) * 5;
     for (let z = -38; z <= 38; z += 3) {
       const x = riverX(z);
@@ -1240,7 +1151,6 @@ const jungle: MapDef = {
         fill: true,
       });
     }
-    // stepping stones: the only dry crossings, so they are worth holding
     for (const [x, z] of [
       [riverX(-20) - 2.8, -20],
       [riverX(-19), -19],
@@ -1252,11 +1162,9 @@ const jungle: MapDef = {
       k.box(x, 0, z, 1.6, 0.5, 1.6, { ink: INK.GREEN });
     }
 
-    // ---- trees: a trunk you can climb and a canopy you can hold -------------
     const tree = (x: number, z: number, top: number, crown: number) => {
       const trunk = 0.9 + crown * 0.06;
       k.box(x, 0, z, trunk, top - 0.6, trunk, { ink: INK.BLACK });
-      // buttress roots double as the first step up
       for (const [dx, dz] of [
         [1, 0],
         [-1, 0],
@@ -1265,7 +1173,6 @@ const jungle: MapDef = {
       ] as [number, number][]) {
         k.box(x + dx * (trunk * 0.9), 0, z + dz * (trunk * 0.9), 1.1, 0.75, 1.1, { ink: INK.BLACK });
       }
-      // the canopy floor, then leaf blobs sunk into it so they read as cover
       k.deck(x, top, z, crown * 1.5, crown * 1.5, INK.GREEN);
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * Math.PI * 2 + x * 0.01;
@@ -1278,7 +1185,6 @@ const jungle: MapDef = {
           z + Math.sin(a) * r,
         );
       }
-      // vines hang where you can see them from below; they are scenery, not rope
       for (const a of [0.8, 3.4]) {
         k.box(x + Math.cos(a) * crown * 0.8, top - 6, z + Math.sin(a) * crown * 0.8, 0.16, 12, 0.16, {
           ink: INK.GREEN,
@@ -1293,15 +1199,12 @@ const jungle: MapDef = {
     tree(-32, 2, 12.5, 7.5);
     tree(8, -34, 9, 5.5);
 
-    // a branch bridging two crowns, so the canopy is a route and not six islands
     k.box(-1, 9.6, -22, 26, 0.5, 1.6, { ink: INK.BLACK });
     k.box(-24, 9.8, -1, 1.6, 0.5, 24, { ink: INK.BLACK });
 
-    // ---- the temple, squat and open, holding the middle ---------------------
     k.box(0, 0, 0, 20, 3.2, 20, { ink: INK.ORANGE });
     k.box(0, 3.2, 0, 16, 3.0, 16, { ink: INK.ORANGE });
     k.deck(0, 6.2, 0, 12, 12, INK.PINK);
-    // a hollow doorway through the base on both axes
     for (const [x, z, w, d] of [
       [0, -8.4, 4.4, 3.4],
       [0, 8.4, 4.4, 3.4],
@@ -1314,7 +1217,6 @@ const jungle: MapDef = {
       for (const t of [-1, 1]) k.box(s * 7, 6.2, t * 7, 1.1, 3.4, 1.1, { ink: INK.PINK });
     }
 
-    // ---- ruins and undergrowth for ground cover -----------------------------
     for (const [x, z, w, h, d] of [
       [-14, -10, 5, 1.4, 1.2],
       [15, 9, 4.5, 1.3, 1.2],
@@ -1386,7 +1288,6 @@ export function buildLevel(
   const k = new MapKit(scene, world, mode === "zombies" || night);
   def.build(k);
 
-  // ground heights are only valid once every collider exists
   const spawns = k.rawSpawns.map(([x, z]) => new THREE.Vector3(x, world.groundY(x, z) + 0.05, z));
   const [px, pz] = def.playerStart;
 

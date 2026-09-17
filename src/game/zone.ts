@@ -1,12 +1,6 @@
 import * as THREE from "three";
 import { INK, makeInkMaterial } from "./renderer";
 
-/**
- * The battle-royale play area, drawn as a wall of red ink closing in.
- *
- * One open-ended cylinder scaled on X/Z: the radius changes every frame while
- * the zone is contracting, so rebuilding geometry would be wasteful.
- */
 export class ZoneView {
   group = new THREE.Group();
   private wall: THREE.Mesh;

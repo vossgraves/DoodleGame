@@ -14,7 +14,6 @@ export default handler(async (req: ApiRequest, res: ApiResponse) => {
   const key = (url.searchParams.get("board") || "kills") as keyof typeof BOARDS;
   const column = BOARDS[key] ?? BOARDS.kills;
 
-  // the column is chosen from a fixed map, never interpolated from user input
   const rows =
     column === "wins"
       ? await sql`select u.username, s.wins as value, s.matches from stats s join users u on u.id = s.user_id order by s.wins desc limit 25`

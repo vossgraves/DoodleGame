@@ -108,7 +108,6 @@ export class AudioSys {
     this.noiseBurst(0.09, 1800, 1.2, 0.22);
     this.beep(220, 0.07, "square", 0.08, 0.45);
   }
-  /** A suppressed shot: the action working, and very little else. */
   suppressed() {
     this.ensure();
     this.noiseBurst(0.05, 520, 0.8, 0.07, "lowpass");
@@ -192,30 +191,25 @@ export class AudioSys {
     this.beep(1400, 0.06, "square", 0.1, 0.6);
     this.noiseBurst(0.08, 4000, 2, 0.1, "highpass");
   }
-  /** Boots skidding on paper. */
   slide() {
     this.ensure();
     this.noiseBurst(0.42, 900, 0.35, 0.16, "bandpass");
   }
-  /** Kicking off a wall: a scuff and a shove. */
   wallJump() {
     this.ensure();
     this.noiseBurst(0.1, 1500, 0.5, 0.14, "bandpass");
     this.beep(320, 0.1, "triangle", 0.06, 1.6);
   }
-  /** Hauling yourself over a ledge. */
   mantle() {
     this.ensure();
     this.noiseBurst(0.16, 700, 0.6, 0.13, "lowpass");
     this.beep(180, 0.14, "sawtooth", 0.05, 1.5);
   }
-  /** The hook leaving the hand. */
   grappleFire() {
     this.ensure();
     this.noiseBurst(0.08, 2600, 1.6, 0.1, "highpass");
     this.beep(520, 0.09, "square", 0.05, 0.5);
   }
-  /** It bit into something. */
   grappleHit() {
     this.ensure();
     this.noiseBurst(0.09, 500, 1.2, 0.16, "lowpass");
@@ -287,7 +281,6 @@ export class AudioSys {
   }
 
   setListener(_x: number, _y: number, _z: number) {
-    /* 2d mix is enough */
   }
 
   rumblePad(input: { rumble: (a: number, b: number, ms: number) => void }, a: number, b: number, ms: number) {
